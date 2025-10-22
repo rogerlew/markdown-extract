@@ -18,3 +18,6 @@ anyhow = "1.0.89"
 clap = { version = "4.5.20", features = ["derive"] }
 markdown-extract = { version = "2.0.0", path = "../markdown-extract" }
 regex = "1.3"
+
+[dev-dependencies]
+assert_cmd = "2.0"

@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::Parser;
 use markdown_extract::{extract_from_path, MarkdownSection};
 use regex::RegexBuilder;
@@ -67,8 +67,25 @@ fn print_section(section: &MarkdownSection, skip_printing_matched_heading: bool)
         .iter()
         .skip(if skip_printing_matched_heading { 1 } else { 0 })
     {
-        writeln!(handle, "{}", line).with_context(|| format!("Failed to print line: {}", line))?;
+        match writeln!(handle, "{}", line) {
+            Ok(_) => {}
+            Err(err) if should_ignore_pipe_error(&err) => return Ok(()),
+            Err(err) => {
+                return Err(err).context(format!("Failed to print line: {}", line));
+            }
+        }
     }
 
-    handle.flush().map_err(|err| anyhow!(err))
+    match handle.flush() {
+        Ok(_) => Ok(()),
+        Err(err) if should_ignore_pipe_error(&err) => Ok(()),
+        Err(err) => Err(err).context("Failed to flush stdout"),
+    }
+}
+
+fn should_ignore_pipe_error(err: &io::Error) -> bool {
+    matches!(
+        err.kind(),
+        io::ErrorKind::BrokenPipe | io::ErrorKind::WouldBlock
+    )
 }

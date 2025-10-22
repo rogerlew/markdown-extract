@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Treat downstream broken pipe and would-block errors as success so CLI can be used safely in pipelines.
+
 ## v2.1.0 (October 2024)
 
 - Error messages will now be printed to stderr. This fixes #20 (thanks @zhimsel)

@@ -33,6 +33,10 @@ $ markdown-extract "Extract me!" my-document.md
 This section should be pulled out.
 ```
 
+`markdown-extract` plays nicely in pipelines: if you stream output into a
+command that closes the pipe early (for example `head`), the CLI will stop
+writing quietly instead of printing broken pipe errors.
+
 ## Installation
 
 If you've got Rust installed on your system, you can simply install
@@ -100,3 +104,13 @@ There aren't many, to be honest.
    documentation, and inject it into OpenAPI schemas.
 
 If you have another use for this tool, please let me know!
+
+## AI Agent Tooling
+
+LLM-based agents tend to work best when you keep their context windows lean. Pairing `markdown-extract` with your prompt assembly scripts lets you grab only the sections agents need—no more, no less.
+
+- Pull targeted instructions or API notes into an agent's scratch space before a run.
+- Pre-filter long knowledge bases so retrieval pipelines send lightweight Markdown snippets to the model.
+- Combine with schedulers (like GitHub Actions or cron) to refresh agent-ready context automatically from evolving docs.
+
+Because the CLI writes clean Markdown to stdout, it slips neatly into shell pipelines or any orchestration layer that can run a process and ingest its output—making it a low-maintenance companion for automated agent workflows.
