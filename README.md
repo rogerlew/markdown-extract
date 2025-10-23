@@ -33,17 +33,370 @@ $ markdown-extract "Extract me!" my-document.md
 This section should be pulled out.
 ```
 
-`markdown-extract` plays nicely in pipelines: if you stream output into a
-command that closes the pipe early (for example `head`), the CLI will stop
-writing quietly instead of printing broken pipe errors.
+Pass `-` as the file argument to read Markdown from standard input:
+
+```console
+$ cat my-document.md | markdown-extract "Extract me!" -
+```
+
+### Quick Reference
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--all` | `-a` | Extract all matching sections (default: first only) |
+| `--case-sensitive` | `-s` | Match pattern exactly (default: case-insensitive) |
+| `--no-print-matched-heading` | `-n` | Omit heading line from output (body only) |
+| `--help` | `-h` | Show help message |
+| `--version` | `-V` | Show version |
+
+**Basic syntax:**
+```
+markdown-extract [OPTIONS] <PATTERN> <FILE>
+```
+
+### Pattern Matching
+
+Patterns are **case-insensitive regex** by default, matched against the heading text (without the `#` markers). Use `--case-sensitive` for exact matches.
+
+```console
+# Match any heading containing "install"
+$ markdown-extract "install" docs.md
+
+# Exact match with anchors
+$ markdown-extract "^Installation$" docs.md
+
+# Multiple possibilities with alternation
+$ markdown-extract "Setup|Configuration" docs.md
+
+# Subsections only (three or more #)
+$ markdown-extract "^###" docs.md
+```
+
+### Extracting Multiple Sections
+
+By default, `markdown-extract` returns only the **first match** and exits. Use `--all` to extract every matching section:
+
+```console
+# Get all "Usage" sections across the document
+$ markdown-extract "Usage" docs.md --all
+
+# Extract all troubleshooting subsections
+$ markdown-extract "^### .* Error" docs.md --all
+```
+
+### Output Control
+
+The `--no-print-matched-heading` (or `-n`) flag omits the heading line, returning only the section body:
+
+```console
+# Get just the content, no heading
+$ markdown-extract "Installation" README.md -n
+
+# Useful for extracting code blocks
+$ markdown-extract "Example" docs.md -n | grep -A5 "```bash"
+```
+
+### Pipeline-Friendly Behavior
+
+`markdown-extract` handles broken pipes gracefully—if you pipe output to `head`, `less`, or any command that closes early, the CLI exits quietly without error messages.
+
+**Reading from stdin:**
+```console
+# Process generated content
+$ generate-docs | markdown-extract "Installation" -
+
+# Chain with other tools
+$ curl https://example.com/docs.md | markdown-extract "API" -
+
+# Filter before extracting
+$ cat large-docs.md | grep -v "DRAFT" | markdown-extract "Section" -
+```
+
+**Piping output:**
+```console
+# Preview first 10 lines of a long section
+$ markdown-extract "API Reference" docs.md | head -10
+
+# Page through output
+$ markdown-extract "Changelog" CHANGELOG.md | less
+```
+
+### Common Workflows
+
+**Extract release notes for CI/CD:**
+```console
+$ markdown-extract "^v1\.2\.0$" CHANGELOG.md > release-notes.txt
+```
+
+**Pull API documentation into a script:**
+```console
+API_DOCS=$(markdown-extract "Authentication" docs/api.md)
+echo "$API_DOCS" | process-documentation
+```
+
+**Combine with other tools:**
+```console
+# Count lines in a section
+$ markdown-extract "Configuration" README.md | wc -l
+
+# Search within a section
+$ markdown-extract "Troubleshooting" docs.md | grep -i "error"
+
+# Extract multiple sections and diff them
+$ diff <(markdown-extract "Old API" docs.md) <(markdown-extract "New API" docs.md)
+```
+
+**Find all matching headings:**
+```console
+# See what matches without extracting
+$ markdown-extract ".*" docs.md --all | grep "^#"
+```
+
+**Process dynamic content:**
+```console
+# Extract from HTTP response
+$ curl -s https://api.example.com/docs | markdown-extract "Endpoints" -
+
+# Extract from command output
+$ ./generate-report | markdown-extract "Summary" -
+
+# Chain multiple extractions
+$ cat docs.md | markdown-extract "Chapter 1" - | markdown-extract "Summary" -
+```
+
+### Section Boundaries
+
+A section includes:
+- The matched heading line (unless `-n` is used)
+- All content until the next heading of **equal or higher level**
+- Subsections are included in their parent section
+
+```markdown
+## Parent Section     ← Matched heading
+Content here.
+
+### Child Section     ← Included (lower level)
+More content.
+
+### Another Child     ← Also included
+Final content.
+
+## Next Section        ← Boundary (same level)
+Not included.
+```
+
+**Examples:**
+
+```console
+# Extracts "Parent" + both child sections
+$ markdown-extract "Parent Section" doc.md
+
+# Extracts only "Child Section" (no siblings)
+$ markdown-extract "Child Section" doc.md
+```
+
+### Heading Support
+
+Both **ATX** (`#`) and **Setext** (underline) headings are supported:
+
+```markdown
+ATX Heading
+===========
+
+Setext level 1 heading
+
+Subheading
+----------
+
+Setext level 2 heading
+
+### ATX Level 3
+
+Standard markdown heading
+```
+
+**Note:** Headings inside fenced code blocks are ignored:
+
+````markdown
+## Real Heading
+
+```markdown
+## Not a heading (inside code block)
+```
+````
+
+### Error Handling & Exit Codes
+
+| Exit Code | Meaning |
+|-----------|---------|
+| 0 | Success (match found and printed) |
+| 1 | No matches found for pattern |
+| 2 | File I/O error or invalid UTF-8 |
+
+```console
+# Check if a section exists
+$ markdown-extract "Deprecated" docs.md > /dev/null 2>&1 && echo "Found"
+
+# Fail CI build if required section is missing
+$ markdown-extract "^License$" README.md || exit 1
+```
+
+### Limitations
+
+- **UTF-8 only**: Non-UTF-8 files will error
+- **Regex size limit**: Patterns over 100 KB are rejected
+- **Full document scan**: Large files (>100 MB) may have performance implications
+
+### For AI Agent Workflows
+
+`markdown-extract` excels at keeping agent context windows lean:
+
+**Pre-filter knowledge bases:**
+```bash
+# Extract only relevant sections for the agent
+markdown-extract "API.*Auth" knowledge-base.md > context.txt
+```
+
+**Dynamic prompt assembly:**
+```python
+import subprocess
+
+def get_section(pattern, file):
+    result = subprocess.run(
+        ["markdown-extract", pattern, file],
+        capture_output=True, text=True
+    )
+    return result.stdout if result.returncode == 0 else None
+
+# Pull targeted instructions
+auth_docs = get_section("Authentication", "docs/api.md")
+if auth_docs:
+    prompt += f"\n\nRelevant documentation:\n{auth_docs}"
+```
+
+**Automated context refresh:**
+```bash
+# Update agent context when docs change (cron/GitHub Actions)
+markdown-extract "Quick Start" README.md > agent-context/quickstart.md
+markdown-extract "^v.*" CHANGELOG.md --all > agent-context/releases.md
+```
+
+**Validation in CI:**
+```bash
+# Ensure required sections exist before deployment
+required_sections=("Installation" "Usage" "License")
+for section in "${required_sections[@]}"; do
+  markdown-extract "^$section$" README.md > /dev/null || {
+    echo "Missing required section: $section"
+    exit 1
+  }
+done
+```
+
+## Companion CLI: `markdown-edit`
+
+Need to *change* Markdown after you've found the right section? The repository also ships `markdown-edit`, a heading-aware editor that understands the spans emitted by `markdown-extract`.
+
+Key features:
+
+- Operations scoped to headings: `replace`, `delete`, `append-to`, `prepend-to`, `insert-after`, `insert-before`.
+- Payload sources via `--with <path>` (or `-` for stdin) and `--with-string "escaped\ntext"`.
+- Safety-first by default: dry-run diffs (`--dry-run`), duplicate guards (`--allow-duplicate` to opt out), atomic writes with optional backups (`--backup` / `--no-backup`).
+- Validation aligned with the [markdown-edit specification](./markdown-edit.spec.md): heading-level enforcement, single-section payloads, and friendly exit codes for automation.
+
+Example workflow:
+
+```console
+# Preview an append without touching disk
+$ markdown-edit README.md append-to "^Changelog$" \
+    --with-string "- Documented markdown-edit release\n" \
+    --dry-run
+
+# Replace a section body but keep the original heading line
+$ markdown-edit docs/guide.md replace "Integration Notes" \
+    --with-string "New guidance goes here.\n" \
+    --keep-heading
+```
+
+Use `--all` (optionally `--max-matches N`) for batched edits, `--quiet` for terse runs, and `--case-sensitive` when the default case-insensitive matching is too broad.
+
+### CLI reference
+
+| Command | Description | Common flags |
+|---------|-------------|--------------|
+| `markdown-edit <file> replace <pattern>` | Replace an entire section (heading + body) | `--with / --with-string`, `--keep-heading` (or `--body-only`), `--allow-duplicate` |
+| `markdown-edit <file> delete <pattern>` | Remove the matching section | `--dry-run`, `--backup/--no-backup`, `--all`, `--max-matches` |
+| `markdown-edit <file> append-to <pattern>` | Append payload to the end of the section body | `--with / --with-string`, `--allow-duplicate`, `--dry-run` |
+| `markdown-edit <file> prepend-to <pattern>` | Insert payload after the heading, before existing content | Same as append |
+| `markdown-edit <file> insert-after <pattern>` | Insert a new section after the matched section | `--with / --with-string`, `--allow-duplicate`, `--dry-run` |
+| `markdown-edit <file> insert-before <pattern>` | Insert a new section before the matched section | Same as `insert-after` |
+
+Global knobs: `--all`, `--max-matches N`, `--case-sensitive`, `--quiet`, `--dry-run`, `--backup` / `--no-backup`.
+
+#### Escaped inline payloads
+
+`--with-string` supports a small, predictable escape set for automation. Anything outside this list is rejected with exit code 5.
+
+| Escape | Meaning |
+|--------|---------|
+| `\\n` | Newline |
+| `\\t` | Horizontal tab |
+| `\\\\` | Literal backslash |
+| `\\"` | Double quote |
+
+Examples:
+
+```console
+$ markdown-edit notes.md append-to "^Today$" --with-string "- sync status\\n"
+$ markdown-edit notes.md replace "Summary" --with-string "All clear\\n" --keep-heading
+```
+
+#### Match limits
+
+`--max-matches` caps how many sections can be touched in a single invocation. Pair it with `--all` when you expect multiple hits but want a hard ceiling.
+
+```console
+# Allow up to 3 replacements; fail with exit code 2 if more match
+$ markdown-edit docs/*.md replace "^Changelog$" \
+    --with updates.md \
+    --all \
+    --max-matches 3
+```
+
+#### Validation failures (examples)
+
+The CLI surfaces actionable messages from the core engine:
+
+- Heading depth mismatch: `insert-before payload heading depth 3 must match target depth 2`
+- Duplicate sibling: `heading 'Release Notes' already exists at this level`
+- Missing payload heading: `replacement payload must begin with a heading`
+
+#### Performance & safety notes
+
+- Large files: the engine streams once through the document, using byte offsets instead of line numbers (tested >=5 MB). Diff generation is the most expensive step in dry-run mode.
+- Backups & atomic writes: every write goes to `file.tmp` and promotes to the original name only after fsync; `--no-backup` skips the `.bak` copy.
+- Path hygiene: the CLI operates on user-supplied paths. In CI/CD, prefer repository-relative paths or sandboxed working directories when invoking the tool with untrusted input.
 
 ## Installation
 
-If you've got Rust installed on your system, you can simply install
-`markdown-extract` with Cargo.
+### Using Cargo
 
 ```console
+# Install the extractor from crates.io
 $ cargo install markdown-extract-cli
+
+# Build the editor from this workspace
+$ cargo install --path crates/markdown-edit-cli
+```
+
+Or run the tools in place:
+
+```console
+# Extract
+$ cargo run -p markdown-extract-cli -- <args>
+
+# Edit
+$ cargo run -p markdown-edit-cli -- <args>
 ```
 
 ### Docker
@@ -97,20 +450,30 @@ The action version corresponds to the version of the tool.
 
 ## Use Cases
 
-There aren't many, to be honest.
+`markdown-extract` shines in several scenarios:
 
-1. Extract patch notes from a `CHANGELOG.md` by version.
-2. The talented folks at HashiCorp are using `markdown-extract` to extract API
-   documentation, and inject it into OpenAPI schemas.
-
-If you have another use for this tool, please let me know!
+1. **Release automation**: Extract version-specific patch notes from `CHANGELOG.md` for CI/CD pipelines
+2. **Documentation generation**: The HashiCorp team uses it to extract API docs and inject them into OpenAPI schemas
+3. **AI agent context management**: Pre-filter documentation to keep LLM context windows lean ([see examples above](#for-ai-agent-workflows))
+4. **Content validation**: Verify required sections exist in documentation before publishing
+5. **Documentation diffing**: Compare sections across versions or files
+6. **Selective archiving**: Extract and save specific documentation sections for compliance
 
 ## AI Agent Tooling
 
-LLM-based agents tend to work best when you keep their context windows lean. Pairing `markdown-extract` with your prompt assembly scripts lets you grab only the sections agents need—no more, no less.
+> **See detailed examples in the [For AI Agent Workflows](#for-ai-agent-workflows) section above.**
 
-- Pull targeted instructions or API notes into an agent's scratch space before a run.
-- Pre-filter long knowledge bases so retrieval pipelines send lightweight Markdown snippets to the model.
-- Combine with schedulers (like GitHub Actions or cron) to refresh agent-ready context automatically from evolving docs.
+LLM-based agents work best with focused context. `markdown-extract` helps you:
 
-Because the CLI writes clean Markdown to stdout, it slips neatly into shell pipelines or any orchestration layer that can run a process and ingest its output—making it a low-maintenance companion for automated agent workflows.
+- **Reduce token usage**: Extract only relevant sections instead of sending entire documents
+- **Improve accuracy**: Targeted context reduces hallucination and improves response quality  
+- **Enable dynamic prompts**: Build context-aware prompts by pulling sections based on user queries
+- **Automate freshness**: Schedule extraction jobs to keep agent knowledge bases current
+
+The tool writes clean Markdown to stdout, making it trivial to integrate with any orchestration framework, shell script, or Python automation that can run subprocesses.
+
+**Real-world integration patterns:**
+- GitHub Actions workflows that refresh agent context on doc updates
+- Python scripts using `subprocess.run()` to dynamically fetch relevant sections
+- Bash orchestration for multi-agent systems with specialized knowledge domains
+- CI validation ensuring documentation completeness before agent deployment

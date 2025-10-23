@@ -1,9 +1,9 @@
 use anyhow::{bail, Context, Result};
 use clap::Parser;
-use markdown_extract::{extract_from_path, MarkdownSection};
-use regex::RegexBuilder;
+use markdown_extract::{extract_from_path, extract_from_reader, MarkdownSection};
+use regex::{Regex, RegexBuilder};
 use std::{
-    io::{self, Write},
+    io::{self, BufReader, Write},
     path::PathBuf,
 };
 
@@ -40,10 +40,14 @@ fn main() -> Result<()> {
         .build()
         .unwrap();
 
-    let matches = extract_from_path(&cli.path, &regex)
-        .with_context(|| format!("Unable to extract at path: {}", cli.path.display()))?;
+    let matches = collect_matches(&cli.path, &regex).with_context(|| {
+        format!(
+            "Unable to extract at path or stream: {}",
+            cli.path.display()
+        )
+    })?;
 
-    if matches.len() == 0 {
+    if matches.is_empty() {
         bail!("No matches found for pattern: {}", cli.pattern);
     }
 
@@ -88,4 +92,14 @@ fn should_ignore_pipe_error(err: &io::Error) -> bool {
         err.kind(),
         io::ErrorKind::BrokenPipe | io::ErrorKind::WouldBlock
     )
+}
+
+fn collect_matches(path: &PathBuf, regex: &Regex) -> Result<Vec<MarkdownSection>> {
+    if path == &PathBuf::from("-") {
+        let stdin = io::stdin();
+        let mut reader = BufReader::new(stdin.lock());
+        Ok(extract_from_reader(&mut reader, regex))
+    } else {
+        Ok(extract_from_path(path, regex)?)
+    }
 }

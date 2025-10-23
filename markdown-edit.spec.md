@@ -722,6 +722,21 @@ wctl markdown-edit <args>  # Calls docker exec or host binary
 - Unix/Windows line endings (normalize on read)
 - CommonMark Markdown (relaxed parsing)
 
+## CLI Quick Reference
+
+| Command | Description | Key Flags |
+|---------|-------------|-----------|
+| `markdown-edit <file> replace <pattern>` | Replace the matched section using a new payload | `--with`, `--with-string`, `--keep-heading` / `--body-only`, `--allow-duplicate` |
+| `markdown-edit <file> delete <pattern>` | Remove the section entirely | `--dry-run`, `--backup` / `--no-backup`, `--all`, `--max-matches` |
+| `markdown-edit <file> append-to <pattern>` | Append payload text to the end of the section body | `--with`, `--with-string`, `--allow-duplicate`, `--dry-run` |
+| `markdown-edit <file> prepend-to <pattern>` | Insert payload immediately after the heading line | Same as append |
+| `markdown-edit <file> insert-after <pattern>` | Insert a new section after the matched section | `--with`, `--with-string`, `--allow-duplicate`, `--dry-run` |
+| `markdown-edit <file> insert-before <pattern>` | Insert a new section before the matched section | Same as insert-after |
+
+Global flags: `--all`, `--max-matches`, `--case-sensitive`, `--dry-run`, `--backup` / `--no-backup`, `--quiet`, `--allow-duplicate`.
+
+Companion note: the `markdown-extract` CLI now accepts `-` as the file argument to read Markdown from `stdin`, enabling pipelines that feed directly into the editor.
+
 ## References
 
 - [CommonMark Spec](https://spec.commonmark.org/)
