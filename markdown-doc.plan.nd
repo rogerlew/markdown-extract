@@ -8,13 +8,13 @@
 - [x] Document architecture overview in `docs/markdown-doc/README.md`
 
 ## Phase 1 — MVP Vertical Slice
-- [ ] Implement configuration resolver with precedence (flags → local config → repo root → defaults)
-- [ ] Provide typed settings structs and validation errors surfaced via exit codes
-- [ ] Build markdown parsing layer (pulldown-cmark wrapper + heading/anchor capture using enriched spans)
-- [ ] Implement file enumeration respecting include/exclude patterns and git staging filters
-- [ ] Deliver `catalog` command with concurrent scan, `--path` / `--staged`, Markdown + JSON outputs, atomic writes
-- [ ] Deliver `lint` command with `broken-links` rule, severity levels, ignore lists, JSON/SARIF outputs
-- [ ] Add CLI acceptance tests covering selective scan, exit codes, output formats
+- [x] Implement configuration resolver with precedence (flags → local config → repo root → defaults)
+- [x] Provide typed settings structs and validation errors surfaced via exit codes
+- [x] Build markdown parsing layer (pulldown-cmark wrapper + heading/anchor capture using enriched spans)
+- [x] Implement file enumeration respecting include/exclude patterns and git staging filters
+- [x] Deliver `catalog` command with concurrent scan, `--path` / `--staged`, Markdown + JSON outputs, atomic writes
+- [x] Deliver `lint` command with `broken-links` rule, severity levels, ignore lists, JSON/SARIF outputs
+- [x] Add CLI acceptance tests covering selective scan, exit codes, output formats
 - [ ] Benchmark `catalog` over large fixture (<5s target) and record results
 - [ ] Publish quickstart docs (setup, config, pre-commit/CI examples)
 
@@ -49,6 +49,6 @@
 - [ ] Track coverage for configuration precedence and error messages
 
 ## Immediate Next Steps
-- [ ] Confirm crate layout and scaffolding approach with stakeholders
-- [ ] Kick off Phase 1 tasks (config resolver, parser, catalog, lint)
+- [x] Confirm crate layout and scaffolding approach with stakeholders
+- [x] Kick off Phase 1 tasks (config resolver, parser, catalog, lint)
 - [ ] Prepare shared fixtures/bench harness and assign implementation agents

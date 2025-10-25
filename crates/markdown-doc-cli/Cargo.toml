@@ -3,6 +3,22 @@ name = "markdown-doc-cli"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "markdown-doc"
+path = "src/main.rs"
+
 [dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
 markdown-doc-core = { path = "../markdown-doc-core" }
 markdown-doc-config = { path = "../markdown-doc-config" }
+markdown-doc-ops = { path = "../markdown-doc-ops" }
+markdown-doc-format = { path = "../markdown-doc-format" }
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.1"
+tempfile = "3.10"

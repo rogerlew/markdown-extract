@@ -37,6 +37,15 @@ Loader output is a typed `Config` struct covering `project`, `catalog`, and `lin
 
 Anchors are generated with Markdown-style slug rules and the heading normaliser is re-exported for lint/catalog consumers. Parser tests cover ATX/Setext headings, YAML front matter, fenced/indented code blocks, and Unicode titles so downstream engines can rely on consistent offsets.
 
+## Catalog & Lint (MVP)
+
+Phase 1 now wires the parser into real operations:
+
+- `markdown-doc catalog` walks Markdown files (respecting config include/exclude filters), renders the documentation catalog (`DOC_CATALOG.md` by default) via atomic writes, and supports `--format json` for agent workflows.
+- `markdown-doc lint` currently ships the `broken-links` rule. It checks intra-repo Markdown links, honours severity overrides and ignore patterns, and emits plain, JSON, or SARIF reports.
+
+Both commands accept selective scanning flags (`--path`, `--staged`) and share the `ScanOptions` plumbing so future operations can reuse the same targeting logic.
+
 ## Roadmap
 
 The accompanying `markdown-doc.plan.nd` file tracks phased milestones (MVP, Quality Gates, Refactoring Support, Intelligence). Update the checklists as features land to keep the roadmap accurate.

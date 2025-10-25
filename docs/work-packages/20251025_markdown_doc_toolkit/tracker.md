@@ -12,11 +12,11 @@
 ## Task Board
 
 ### Ready / Backlog
-- [ ] Build lint engine skeleton with rule plug-in architecture (**Agent 3**)
 - [ ] Draft CI workflows (fmt, clippy, test, benchmarks) (**Agent 4**)
+- [ ] Prepare benchmarking harness for catalog/lint performance (**Agent 4**)
 
 ### In Progress
-- [x] Workspace scaffolding, fixtures, and architecture docs seeded (2025-10-25)
+- [ ] Awaiting Agent 4 kickoff (CI + benchmarks)
 
 ### Blocked
 - [ ] None currently
@@ -25,11 +25,12 @@
 - [x] Bootstrap workspace crates, fixtures, and docs (2025-10-25)
 - [x] Flesh out configuration resolver with precedence, defaults, and validation (**Agent 1**, 2025-10-25)
 - [x] Implement markdown parsing layer with enriched spans (**Agent 2**, 2025-10-25)
+- [x] Ship catalog generation + broken-links lint CLI slice (**Agent 3**, 2025-10-25)
 
 ## Timeline
 
 - **2025-10-25** – Package created, initial scaffolding complete
-- **TBD** – Phase 1 MVP (`catalog`, `lint broken-links`) delivered
+- **2025-10-25** – Phase 1 MVP (`catalog`, `lint broken-links`) delivered
 - **TBD** – Phase 2 quality gates released
 - **TBD** – Phase 3 refactoring support shipped
 - **TBD** – Phase 4 intelligence features delivered and package closed
@@ -148,6 +149,29 @@ cargo test -p markdown-doc-config
 ```bash
 cargo fmt
 cargo test -p markdown-doc-parser
+```
+
+### 2025-10-25: Catalog & lint MVP
+**Agent/Contributor**: Agent 3 (Codex)
+
+**Work completed**:
+- Implemented `catalog` and `lint` (broken-links) operations in `markdown-doc-ops`, including selective scanning, git-staged support, and atomic writes.
+- Added renderer support for Markdown/JSON/SARIF outputs and wired the CLI via `clap` with new integration tests.
+- Delivered basic link resolver, config-driven ignores/severity, and JSON/SARIF structured summaries ready for CI piping.
+
+**Blockers encountered**:
+- None
+
+**Next steps**:
+1. Expand lint engine with additional rules (anchors, hierarchy, required sections).
+2. Layer catalog benchmarking/CI hooks (handoff to Agent 4 plan).
+3. Explore caching/streaming improvements once larger fixture profiling is available.
+
+**Test results**:
+```bash
+cargo fmt
+cargo clippy --all-targets --all-features
+cargo test --all
 ```
 
 ## Watch List

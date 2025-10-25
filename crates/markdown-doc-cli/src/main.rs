@@ -1,10 +1,11 @@
-//! Temporary CLI entrypoint that will evolve with the real command surface.
-
-use markdown_doc_config::Config;
-use markdown_doc_core::MarkdownDoc;
+use std::process;
 
 fn main() {
-    let engine = MarkdownDoc::bootstrap(Config::default());
-    let _ops = engine.operations();
-    println!("markdown-doc CLI scaffolding ready");
+    match markdown_doc_cli::run() {
+        Ok(code) => process::exit(code),
+        Err(err) => {
+            eprintln!("markdown-doc error: {err}");
+            process::exit(1);
+        }
+    }
 }

@@ -8,3 +8,4 @@ path = "src/lib.rs"
 
 [dependencies]
 rayon = "1"
+tempfile = "3.10"
