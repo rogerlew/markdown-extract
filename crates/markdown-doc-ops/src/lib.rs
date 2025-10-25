@@ -14,8 +14,8 @@ pub struct Operations {
 impl Operations {
     /// Assemble the operation layer from config by wiring parser + renderer.
     pub fn new(config: Config) -> Self {
-        let _parser = ParserContext::new(config);
-        let _renderer = Renderer::from_config(config);
+        let _parser = ParserContext::new(config.clone());
+        let _renderer = Renderer::from_config(config.clone());
         parallel_for_each(vec![()], |_| {});
         let _ = (_parser, _renderer);
         Self { config }

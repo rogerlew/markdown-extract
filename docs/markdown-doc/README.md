@@ -16,6 +16,17 @@ The `markdown-doc` toolkit is composed of a collection of crates that layer resp
 
 Integration tests live under `tests/markdown-doc/` and currently mirror the markdown tree from `/workdir/wepppy`. Regenerate the snapshot with the copy script noted in the Cross-Cutting Foundations plan when upstream documentation changes.
 
+## Configuration Loading
+
+The `markdown-doc-config` crate resolves configuration using the precedence stack defined in the spec:
+
+1. CLI override (`--config`)
+2. `.markdown-doc.toml` in the working directory
+3. `.markdown-doc.toml` at the git repository root
+4. Built-in defaults
+
+Loader output is a typed `Config` struct covering `project`, `catalog`, and `lint` settings. Headings, glob patterns, and lint rule identifiers are validated on load, and each resolved layer is tracked via `ConfigSources` so higher-level crates can surface provenance in diagnostics.
+
 ## Roadmap
 
 The accompanying `markdown-doc.plan.nd` file tracks phased milestones (MVP, Quality Gates, Refactoring Support, Intelligence). Update the checklists as features land to keep the roadmap accurate.

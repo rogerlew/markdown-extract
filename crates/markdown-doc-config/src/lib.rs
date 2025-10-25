@@ -1,6 +1,1015 @@
-//! Configuration primitives for the markdown-doc toolkit.
+//! Configuration primitives and loader for the markdown-doc toolkit.
+//!
+//! The loader resolves configuration using the precedence stack described in
+//! `markdown-doc.spec.md`:
+//! override flag → working directory → git root → built-in defaults.
+//! Parsed settings are normalised into typed structures so downstream crates
+//! can operate without touching raw TOML.
 
-/// Placeholder config type to keep the workspace compiling while the full
-/// configuration system is under construction.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Config;
+use std::collections::{HashMap, HashSet};
+use std::env;
+use std::fmt;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+
+use globset::Glob;
+use serde::Deserialize;
+use thiserror::Error;
+
+const CONFIG_FILE_NAME: &str = ".markdown-doc.toml";
+
+/// Complete configuration resolved from defaults and on-disk overrides.
+#[derive(Clone, Debug)]
+pub struct Config {
+    pub project: ProjectSettings,
+    pub catalog: CatalogSettings,
+    pub lint: LintSettings,
+    pub sources: ConfigSources,
+}
+
+/// Project-level settings that declare repository scope boundaries.
+#[derive(Clone, Debug)]
+pub struct ProjectSettings {
+    pub name: Option<String>,
+    pub root: PathBuf,
+    pub exclude: PatternList,
+}
+
+/// Settings that govern the catalog command.
+#[derive(Clone, Debug)]
+pub struct CatalogSettings {
+    pub output: PathBuf,
+    pub include: PatternList,
+    pub exclude: PatternList,
+}
+
+/// Settings covering lint behaviour and rule configuration.
+#[derive(Clone, Debug)]
+pub struct LintSettings {
+    pub rules: Vec<LintRule>,
+    pub severity: HashMap<LintRule, SeverityLevel>,
+    pub max_heading_depth: u8,
+    pub ignore: Vec<LintIgnore>,
+}
+
+impl LintSettings {
+    /// Returns the effective severity for `rule`, defaulting to `Error`.
+    pub fn severity_for(&self, rule: LintRule) -> SeverityLevel {
+        self.severity
+            .get(&rule)
+            .copied()
+            .unwrap_or(SeverityLevel::Error)
+    }
+}
+
+/// Pattern plus compiled matcher helper.
+#[derive(Clone, Debug)]
+pub struct Pattern {
+    original: String,
+    glob: Glob,
+}
+
+impl Pattern {
+    fn new(source: ConfigSource, value: String) -> Result<Self, ConfigValidationError> {
+        match Glob::new(&value) {
+            Ok(glob) => Ok(Pattern {
+                original: value,
+                glob,
+            }),
+            Err(err) => Err(ConfigValidationError::new(
+                Some(source),
+                format!("invalid glob pattern '{value}': {err}"),
+            )),
+        }
+    }
+
+    pub fn original(&self) -> &str {
+        &self.original
+    }
+
+    pub fn glob(&self) -> &Glob {
+        &self.glob
+    }
+}
+
+/// Ordered list of glob patterns.
+#[derive(Clone, Debug, Default)]
+pub struct PatternList {
+    patterns: Vec<Pattern>,
+}
+
+impl PatternList {
+    fn new(patterns: Vec<Pattern>) -> Self {
+        PatternList { patterns }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.patterns.is_empty()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Pattern> {
+        self.patterns.iter()
+    }
+}
+
+/// Supported lint rules. Keep the list in sync with the specification.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum LintRule {
+    BrokenLinks,
+    BrokenAnchors,
+    DuplicateAnchors,
+    HeadingHierarchy,
+    RequiredSections,
+}
+
+impl LintRule {
+    pub const ALL: &'static [LintRule] = &[
+        LintRule::BrokenLinks,
+        LintRule::BrokenAnchors,
+        LintRule::DuplicateAnchors,
+        LintRule::HeadingHierarchy,
+        LintRule::RequiredSections,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LintRule::BrokenLinks => "broken-links",
+            LintRule::BrokenAnchors => "broken-anchors",
+            LintRule::DuplicateAnchors => "duplicate-anchors",
+            LintRule::HeadingHierarchy => "heading-hierarchy",
+            LintRule::RequiredSections => "required-sections",
+        }
+    }
+}
+
+impl fmt::Display for LintRule {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for LintRule {
+    type Err = ();
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "broken-links" => Ok(LintRule::BrokenLinks),
+            "broken-anchors" => Ok(LintRule::BrokenAnchors),
+            "duplicate-anchors" => Ok(LintRule::DuplicateAnchors),
+            "heading-hierarchy" => Ok(LintRule::HeadingHierarchy),
+            "required-sections" => Ok(LintRule::RequiredSections),
+            _ => Err(()),
+        }
+    }
+}
+
+/// Severity configuration surfaced to lint consumers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SeverityLevel {
+    Error,
+    Warning,
+    Ignore,
+}
+
+impl fmt::Display for SeverityLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let label = match self {
+            SeverityLevel::Error => "error",
+            SeverityLevel::Warning => "warning",
+            SeverityLevel::Ignore => "ignore",
+        };
+        f.write_str(label)
+    }
+}
+
+impl std::str::FromStr for SeverityLevel {
+    type Err = ();
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "error" => Ok(SeverityLevel::Error),
+            "warning" => Ok(SeverityLevel::Warning),
+            "ignore" => Ok(SeverityLevel::Ignore),
+            _ => Err(()),
+        }
+    }
+}
+
+/// Ignore rule describing which lint rules to suppress for a glob path.
+#[derive(Clone, Debug)]
+pub struct LintIgnore {
+    pub path: Pattern,
+    pub rules: Vec<LintRule>,
+    pub source: ConfigSource,
+}
+
+/// Provenance information for resolved configuration.
+#[derive(Clone, Debug)]
+pub struct ConfigSources {
+    pub working_directory: PathBuf,
+    pub layers: Vec<ConfigSource>,
+}
+
+/// Specific layer of configuration (default/git/local/override).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConfigSource {
+    pub kind: ConfigSourceKind,
+    pub path: Option<PathBuf>,
+    pub base_dir: PathBuf,
+}
+
+impl ConfigSource {
+    fn default(base_dir: PathBuf) -> Self {
+        ConfigSource {
+            kind: ConfigSourceKind::Default,
+            path: None,
+            base_dir,
+        }
+    }
+
+    fn for_file(kind: ConfigSourceKind, path: PathBuf) -> Self {
+        let base_dir = path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+        ConfigSource {
+            kind,
+            path: Some(path),
+            base_dir,
+        }
+    }
+
+    fn describe(&self) -> String {
+        match (&self.kind, &self.path) {
+            (ConfigSourceKind::Default, _) => "built-in defaults".to_owned(),
+            (kind, Some(path)) => format!("{} at {}", kind, path.display()),
+            (kind, None) => kind.to_string(),
+        }
+    }
+}
+
+/// Kinds of configuration sources, ordered from lowest to highest precedence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConfigSourceKind {
+    Default,
+    GitRoot,
+    Local,
+    Override,
+}
+
+impl fmt::Display for ConfigSourceKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let label = match self {
+            ConfigSourceKind::Default => "defaults",
+            ConfigSourceKind::GitRoot => "git-root config",
+            ConfigSourceKind::Local => "local config",
+            ConfigSourceKind::Override => "override config",
+        };
+        f.write_str(label)
+    }
+}
+
+/// Loader options, typically supplied by the CLI layer.
+#[derive(Clone, Debug, Default)]
+pub struct LoadOptions {
+    pub override_path: Option<PathBuf>,
+    pub working_dir: Option<PathBuf>,
+}
+
+impl LoadOptions {
+    pub fn with_override_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.override_path = Some(path.into());
+        self
+    }
+
+    pub fn with_working_dir(mut self, path: impl Into<PathBuf>) -> Self {
+        self.working_dir = Some(path.into());
+        self
+    }
+}
+
+/// Errors surfaced while loading configuration.
+#[derive(Debug, Error)]
+pub enum ConfigError {
+    #[error("failed to resolve working directory {attempted}: {source}")]
+    WorkingDirectory {
+        attempted: PathBuf,
+        source: io::Error,
+    },
+    #[error("override config {path} not found")]
+    OverrideNotFound { path: PathBuf },
+    #[error("failed to read config {path}: {source}")]
+    Io { path: PathBuf, source: io::Error },
+    #[error("failed to parse config {path}: {source}")]
+    Parse {
+        path: PathBuf,
+        source: toml::de::Error,
+    },
+    #[error("configuration validation failed:\n{0}")]
+    Validation(ConfigValidationErrors),
+}
+
+impl Config {
+    /// Loads configuration using the precedence rules and returns typed settings.
+    pub fn load(options: LoadOptions) -> Result<Self, ConfigError> {
+        let working_dir = resolve_working_dir(options.working_dir)?;
+        let override_path = options
+            .override_path
+            .map(|path| make_absolute(&path, &working_dir));
+
+        if let Some(path) = &override_path {
+            if !path.exists() {
+                return Err(ConfigError::OverrideNotFound { path: path.clone() });
+            }
+        }
+
+        let default_source = ConfigSource::default(working_dir.clone());
+        let mut merged = PartialConfig::empty();
+        merged.merge(defaults_layer(default_source.clone()));
+
+        let mut source_layers = vec![default_source];
+
+        let git_root = find_git_root(&working_dir);
+        let git_config_path = git_root.as_ref().map(|root| root.join(CONFIG_FILE_NAME));
+        let local_config_path = working_dir.join(CONFIG_FILE_NAME);
+
+        if let Some(path) = git_config_path.as_ref() {
+            if path.exists() && Some(path) != override_path.as_ref() && path != &local_config_path {
+                let source = ConfigSource::for_file(ConfigSourceKind::GitRoot, path.clone());
+                merged.merge(load_layer(path, source.clone())?);
+                source_layers.push(source);
+            }
+        }
+
+        if local_config_path.exists() && Some(&local_config_path) != override_path.as_ref() {
+            let source = ConfigSource::for_file(ConfigSourceKind::Local, local_config_path.clone());
+            merged.merge(load_layer(&local_config_path, source.clone())?);
+            source_layers.push(source);
+        }
+
+        if let Some(path) = override_path {
+            let source = ConfigSource::for_file(ConfigSourceKind::Override, path.clone());
+            merged.merge(load_layer(&path, source.clone())?);
+            source_layers.push(source);
+        }
+
+        let config = merged.finalize().map_err(ConfigError::Validation)?;
+        Ok(Config {
+            project: config.project,
+            catalog: config.catalog,
+            lint: config.lint,
+            sources: ConfigSources {
+                working_directory: working_dir,
+                layers: source_layers,
+            },
+        })
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config::load(LoadOptions::default()).unwrap_or_else(|err| {
+            panic!("failed to load markdown-doc defaults: {err}");
+        })
+    }
+}
+
+fn resolve_working_dir(override_dir: Option<PathBuf>) -> Result<PathBuf, ConfigError> {
+    match override_dir {
+        Some(path) => fs::canonicalize(&path).map_err(|source| ConfigError::WorkingDirectory {
+            attempted: path,
+            source,
+        }),
+        None => env::current_dir().map_err(|source| ConfigError::WorkingDirectory {
+            attempted: PathBuf::from("."),
+            source,
+        }),
+    }
+}
+
+fn make_absolute(path: &Path, base: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        base.join(path)
+    }
+}
+
+fn load_layer(path: &Path, source: ConfigSource) -> Result<PartialConfig, ConfigError> {
+    let contents = fs::read_to_string(path).map_err(|source| ConfigError::Io {
+        path: path.into(),
+        source,
+    })?;
+    parse_layer(&contents, source).map_err(|err| match err {
+        LayerParseError::Parse { source } => ConfigError::Parse {
+            path: path.into(),
+            source,
+        },
+    })
+}
+
+fn parse_layer(contents: &str, source: ConfigSource) -> Result<PartialConfig, LayerParseError> {
+    let raw: RawConfig =
+        toml::from_str(contents).map_err(|source| LayerParseError::Parse { source })?;
+    Ok(raw.into_partial(source))
+}
+
+fn defaults_layer(source: ConfigSource) -> PartialConfig {
+    let project = ProjectPartial {
+        root: Some(Located::new(PathBuf::from("."), source.clone())),
+        exclude: Some(Located::new(Vec::new(), source.clone())),
+        ..ProjectPartial::default()
+    };
+
+    let catalog = CatalogPartial {
+        output: Some(Located::new(
+            PathBuf::from("DOC_CATALOG.md"),
+            source.clone(),
+        )),
+        include_patterns: Some(Located::new(vec!["**/*.md".into()], source.clone())),
+        exclude_patterns: Some(Located::new(
+            vec!["**/node_modules/**".into(), "**/vendor/**".into()],
+            source.clone(),
+        )),
+    };
+
+    let lint = LintPartial {
+        rules: Some(Located::new(vec!["broken-links".into()], source.clone())),
+        max_heading_depth: Some(Located::new(4, source.clone())),
+        ..LintPartial::default()
+    };
+
+    PartialConfig {
+        project: Some(project),
+        catalog: Some(catalog),
+        lint: Some(lint),
+    }
+}
+
+fn find_git_root(start: &Path) -> Option<PathBuf> {
+    let mut current = Some(start);
+    while let Some(dir) = current {
+        if dir.join(".git").exists() {
+            return Some(dir.to_path_buf());
+        }
+        current = dir.parent();
+    }
+    None
+}
+
+#[derive(Debug)]
+enum LayerParseError {
+    Parse { source: toml::de::Error },
+}
+
+#[derive(Clone, Debug, Default)]
+struct PartialConfig {
+    project: Option<ProjectPartial>,
+    catalog: Option<CatalogPartial>,
+    lint: Option<LintPartial>,
+}
+
+impl PartialConfig {
+    fn empty() -> Self {
+        PartialConfig {
+            project: None,
+            catalog: None,
+            lint: None,
+        }
+    }
+
+    fn merge(&mut self, mut other: PartialConfig) {
+        if let Some(other_project) = other.project.take() {
+            match &mut self.project {
+                Some(project) => project.merge(other_project),
+                None => self.project = Some(other_project),
+            }
+        }
+
+        if let Some(other_catalog) = other.catalog.take() {
+            match &mut self.catalog {
+                Some(catalog) => catalog.merge(other_catalog),
+                None => self.catalog = Some(other_catalog),
+            }
+        }
+
+        if let Some(other_lint) = other.lint.take() {
+            match &mut self.lint {
+                Some(lint) => lint.merge(other_lint),
+                None => self.lint = Some(other_lint),
+            }
+        }
+    }
+
+    fn finalize(self) -> Result<ResolvedConfig, ConfigValidationErrors> {
+        let mut errors = Vec::new();
+
+        let project_partial = self.project.unwrap_or_default();
+        let project_root_loc = project_partial.root.unwrap_or_else(|| {
+            Located::new(
+                PathBuf::from("."),
+                ConfigSource::default(PathBuf::from(".")),
+            )
+        });
+
+        let project_root = resolve_path(&project_root_loc);
+        let exclude_patterns = compile_patterns(
+            project_partial.exclude.unwrap_or_default(),
+            "project.exclude",
+            &mut errors,
+        );
+
+        let catalog_partial = self.catalog.unwrap_or_default();
+        let catalog_output_loc = catalog_partial.output.unwrap_or_else(|| {
+            Located::new(
+                PathBuf::from("DOC_CATALOG.md"),
+                ConfigSource::default(PathBuf::from(".")),
+            )
+        });
+
+        let catalog_output = resolve_path(&catalog_output_loc);
+        let catalog_include = compile_patterns(
+            catalog_partial.include_patterns.unwrap_or_default(),
+            "catalog.include_patterns",
+            &mut errors,
+        );
+        let catalog_exclude = compile_patterns(
+            catalog_partial.exclude_patterns.unwrap_or_default(),
+            "catalog.exclude_patterns",
+            &mut errors,
+        );
+
+        let lint_partial = self.lint.unwrap_or_default();
+        let rules_loc = lint_partial.rules.unwrap_or_else(|| {
+            Located::new(
+                vec!["broken-links".into()],
+                ConfigSource::default(PathBuf::from(".")),
+            )
+        });
+        let rules = parse_rules(rules_loc, &mut errors);
+
+        let max_heading_depth = lint_partial
+            .max_heading_depth
+            .unwrap_or_else(|| Located::new(4, ConfigSource::default(PathBuf::from("."))));
+
+        if max_heading_depth.value == 0 || max_heading_depth.value > 6 {
+            errors.push(ConfigValidationError::new(
+                Some(max_heading_depth.source.clone()),
+                format!(
+                    "lint.max_heading_depth must be between 1 and 6 (received {})",
+                    max_heading_depth.value
+                ),
+            ));
+        }
+
+        let severity = parse_severity_map(lint_partial.severity, &mut errors);
+        let ignore = parse_ignore_list(lint_partial.ignore, &mut errors);
+
+        if !errors.is_empty() {
+            return Err(ConfigValidationErrors(errors));
+        }
+
+        Ok(ResolvedConfig {
+            project: ProjectSettings {
+                name: project_partial.name.map(|name| name.value),
+                root: project_root,
+                exclude: PatternList::new(exclude_patterns),
+            },
+            catalog: CatalogSettings {
+                output: catalog_output,
+                include: PatternList::new(catalog_include),
+                exclude: PatternList::new(catalog_exclude),
+            },
+            lint: LintSettings {
+                rules,
+                severity,
+                max_heading_depth: max_heading_depth.value,
+                ignore,
+            },
+        })
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct ProjectPartial {
+    name: Option<Located<String>>,
+    root: Option<Located<PathBuf>>,
+    exclude: Option<Located<Vec<String>>>,
+}
+
+impl ProjectPartial {
+    fn merge(&mut self, other: ProjectPartial) {
+        if other.name.is_some() {
+            self.name = other.name;
+        }
+        if other.root.is_some() {
+            self.root = other.root;
+        }
+        if other.exclude.is_some() {
+            self.exclude = other.exclude;
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct CatalogPartial {
+    output: Option<Located<PathBuf>>,
+    include_patterns: Option<Located<Vec<String>>>,
+    exclude_patterns: Option<Located<Vec<String>>>,
+}
+
+impl CatalogPartial {
+    fn merge(&mut self, other: CatalogPartial) {
+        if other.output.is_some() {
+            self.output = other.output;
+        }
+        if other.include_patterns.is_some() {
+            self.include_patterns = other.include_patterns;
+        }
+        if other.exclude_patterns.is_some() {
+            self.exclude_patterns = other.exclude_patterns;
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct LintPartial {
+    rules: Option<Located<Vec<String>>>,
+    max_heading_depth: Option<Located<u8>>,
+    severity: HashMap<String, Located<String>>,
+    ignore: Vec<Located<LintIgnorePartial>>,
+}
+
+impl LintPartial {
+    fn merge(&mut self, other: LintPartial) {
+        if other.rules.is_some() {
+            self.rules = other.rules;
+        }
+        if other.max_heading_depth.is_some() {
+            self.max_heading_depth = other.max_heading_depth;
+        }
+        for (key, value) in other.severity {
+            self.severity.insert(key, value);
+        }
+        self.ignore.extend(other.ignore);
+    }
+}
+
+#[derive(Clone, Debug)]
+struct LintIgnorePartial {
+    path: String,
+    rules: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+struct Located<T> {
+    value: T,
+    source: ConfigSource,
+}
+
+impl<T> Located<T> {
+    fn new(value: T, source: ConfigSource) -> Self {
+        Located { value, source }
+    }
+}
+
+impl Default for Located<Vec<String>> {
+    fn default() -> Self {
+        Located::new(Vec::new(), ConfigSource::default(PathBuf::from(".")))
+    }
+}
+
+fn resolve_path(located: &Located<PathBuf>) -> PathBuf {
+    let path = &located.value;
+    if path.is_absolute() {
+        path.clone()
+    } else {
+        located.source.base_dir.join(path)
+    }
+}
+
+fn compile_patterns(
+    located: Located<Vec<String>>,
+    context: &str,
+    errors: &mut Vec<ConfigValidationError>,
+) -> Vec<Pattern> {
+    let mut patterns = Vec::new();
+    for pattern in located.value {
+        match Pattern::new(located.source.clone(), pattern.clone()) {
+            Ok(compiled) => patterns.push(compiled),
+            Err(err) => errors.push(err.with_context(context)),
+        }
+    }
+    patterns
+}
+
+fn parse_rules(
+    located: Located<Vec<String>>,
+    errors: &mut Vec<ConfigValidationError>,
+) -> Vec<LintRule> {
+    let mut result = Vec::new();
+    let mut seen = HashSet::new();
+    for rule_name in located.value {
+        match rule_name.parse::<LintRule>() {
+            Ok(rule) => {
+                if !seen.insert(rule) {
+                    errors.push(
+                        ConfigValidationError::new(
+                            Some(located.source.clone()),
+                            format!("duplicate lint rule '{rule}' in lint.rules"),
+                        )
+                        .with_context("lint.rules"),
+                    );
+                } else {
+                    result.push(rule);
+                }
+            }
+            Err(_) => errors.push(
+                ConfigValidationError::new(
+                    Some(located.source.clone()),
+                    format!("unknown lint rule '{rule_name}'"),
+                )
+                .with_context("lint.rules"),
+            ),
+        }
+    }
+    result
+}
+
+fn parse_severity_map(
+    raw: HashMap<String, Located<String>>,
+    errors: &mut Vec<ConfigValidationError>,
+) -> HashMap<LintRule, SeverityLevel> {
+    let mut result = HashMap::new();
+    for (rule_name, located_value) in raw {
+        match rule_name.parse::<LintRule>() {
+            Ok(rule) => match located_value.value.parse::<SeverityLevel>() {
+                Ok(level) => {
+                    result.insert(rule, level);
+                }
+                Err(_) => errors.push(
+                    ConfigValidationError::new(
+                        Some(located_value.source.clone()),
+                        format!(
+                            "invalid severity '{}' for rule '{}'",
+                            located_value.value, rule
+                        ),
+                    )
+                    .with_context("lint.severity"),
+                ),
+            },
+            Err(_) => errors.push(
+                ConfigValidationError::new(
+                    Some(located_value.source.clone()),
+                    format!("unknown lint rule '{}' in lint.severity", rule_name),
+                )
+                .with_context("lint.severity"),
+            ),
+        }
+    }
+    result
+}
+
+fn parse_ignore_list(
+    entries: Vec<Located<LintIgnorePartial>>,
+    errors: &mut Vec<ConfigValidationError>,
+) -> Vec<LintIgnore> {
+    let mut result = Vec::new();
+    for entry in entries {
+        let pattern = match Pattern::new(entry.source.clone(), entry.value.path.clone()) {
+            Ok(pattern) => pattern,
+            Err(err) => {
+                errors.push(err.with_context("lint.ignore"));
+                continue;
+            }
+        };
+
+        if entry.value.rules.is_empty() {
+            errors.push(
+                ConfigValidationError::new(
+                    Some(entry.source.clone()),
+                    format!(
+                        "lint.ignore entry for pattern '{}' must specify at least one rule",
+                        pattern.original()
+                    ),
+                )
+                .with_context("lint.ignore"),
+            );
+            continue;
+        }
+
+        let mut rules = Vec::new();
+        for rule_name in entry.value.rules {
+            match rule_name.parse::<LintRule>() {
+                Ok(rule) => rules.push(rule),
+                Err(_) => errors.push(
+                    ConfigValidationError::new(
+                        Some(entry.source.clone()),
+                        format!(
+                            "unknown lint rule '{}' in lint.ignore entry for pattern '{}'",
+                            rule_name,
+                            pattern.original()
+                        ),
+                    )
+                    .with_context("lint.ignore"),
+                ),
+            }
+        }
+
+        result.push(LintIgnore {
+            path: pattern,
+            rules,
+            source: entry.source,
+        });
+    }
+    result
+}
+
+#[derive(Clone, Debug)]
+struct ResolvedConfig {
+    project: ProjectSettings,
+    catalog: CatalogSettings,
+    lint: LintSettings,
+}
+
+/// Container for validation failures, formatted as a bullet list.
+#[derive(Debug)]
+pub struct ConfigValidationErrors(pub Vec<ConfigValidationError>);
+
+impl fmt::Display for ConfigValidationErrors {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (idx, err) in self.0.iter().enumerate() {
+            if idx > 0 {
+                writeln!(f)?;
+            }
+            write!(f, "- {err}")?;
+        }
+        Ok(())
+    }
+}
+
+impl ConfigValidationErrors {
+    pub fn iter(&self) -> impl Iterator<Item = &ConfigValidationError> {
+        self.0.iter()
+    }
+}
+
+/// Validation failure with optional provenance.
+#[derive(Clone, Debug)]
+pub struct ConfigValidationError {
+    pub source: Option<ConfigSource>,
+    pub message: String,
+    pub context: Option<String>,
+}
+
+impl ConfigValidationError {
+    fn new(source: Option<ConfigSource>, message: String) -> Self {
+        ConfigValidationError {
+            source,
+            message,
+            context: None,
+        }
+    }
+
+    fn with_context(mut self, context: impl Into<String>) -> Self {
+        self.context = Some(context.into());
+        self
+    }
+}
+
+impl fmt::Display for ConfigValidationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(context) = &self.context {
+            write!(f, "{}: {}", context, self.message)?;
+        } else {
+            write!(f, "{}", self.message)?;
+        }
+        if let Some(source) = &self.source {
+            write!(f, " ({})", source.describe())?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RawConfig {
+    #[serde(default)]
+    project: Option<RawProject>,
+    #[serde(default)]
+    catalog: Option<RawCatalog>,
+    #[serde(default)]
+    lint: Option<RawLint>,
+}
+
+impl RawConfig {
+    fn into_partial(self, source: ConfigSource) -> PartialConfig {
+        PartialConfig {
+            project: self
+                .project
+                .map(|project| project.into_partial(source.clone())),
+            catalog: self
+                .catalog
+                .map(|catalog| catalog.into_partial(source.clone())),
+            lint: self.lint.map(|lint| lint.into_partial(source)),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RawProject {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    root: Option<PathBuf>,
+    #[serde(default)]
+    exclude: Option<Vec<String>>,
+}
+
+impl RawProject {
+    fn into_partial(self, source: ConfigSource) -> ProjectPartial {
+        ProjectPartial {
+            name: self.name.map(|value| Located::new(value, source.clone())),
+            root: self.root.map(|value| Located::new(value, source.clone())),
+            exclude: self
+                .exclude
+                .map(|value| Located::new(value, source.clone())),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RawCatalog {
+    #[serde(default)]
+    output: Option<PathBuf>,
+    #[serde(default)]
+    include_patterns: Option<Vec<String>>,
+    #[serde(default)]
+    exclude_patterns: Option<Vec<String>>,
+}
+
+impl RawCatalog {
+    fn into_partial(self, source: ConfigSource) -> CatalogPartial {
+        CatalogPartial {
+            output: self.output.map(|value| Located::new(value, source.clone())),
+            include_patterns: self
+                .include_patterns
+                .map(|value| Located::new(value, source.clone())),
+            exclude_patterns: self
+                .exclude_patterns
+                .map(|value| Located::new(value, source)),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RawLint {
+    #[serde(default)]
+    rules: Option<Vec<String>>,
+    #[serde(default)]
+    max_heading_depth: Option<u8>,
+    #[serde(default)]
+    severity: HashMap<String, String>,
+    #[serde(default)]
+    ignore: Vec<RawLintIgnore>,
+}
+
+impl RawLint {
+    fn into_partial(self, source: ConfigSource) -> LintPartial {
+        let severity = self
+            .severity
+            .into_iter()
+            .map(|(key, value)| (key, Located::new(value, source.clone())))
+            .collect();
+
+        let ignore = self
+            .ignore
+            .into_iter()
+            .map(|entry| {
+                Located::new(
+                    LintIgnorePartial {
+                        path: entry.path,
+                        rules: entry.rules.unwrap_or_default(),
+                    },
+                    source.clone(),
+                )
+            })
+            .collect();
+
+        LintPartial {
+            rules: self.rules.map(|value| Located::new(value, source.clone())),
+            max_heading_depth: self
+                .max_heading_depth
+                .map(|value| Located::new(value, source.clone())),
+            severity,
+            ignore,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RawLintIgnore {
+    path: String,
+    #[serde(default)]
+    rules: Option<Vec<String>>,
+}

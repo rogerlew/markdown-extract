@@ -8,7 +8,7 @@ where
     T: IntoParallelIterator,
     F: Fn(T::Item) + Send + Sync,
 {
-    items.into_par_iter().for_each(|item| func(item));
+    items.into_par_iter().for_each(func);
 }
 
 /// Atomically write content to the target path (placeholder).
