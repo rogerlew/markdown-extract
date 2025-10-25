@@ -4,5 +4,13 @@ members = [
     "crates/markdown-extract-cli",
     "crates/markdown-edit-core",
     "crates/markdown-edit-cli",
+    "crates/markdown-doc-config",
+    "crates/markdown-doc-parser",
+    "crates/markdown-doc-utils",
+    "crates/markdown-doc-format",
+    "crates/markdown-doc-ops",
+    "crates/markdown-doc-core",
+    "crates/markdown-doc-cli",
+    "crates/markdown-doc-test-support",
 ]
 resolver = "2"

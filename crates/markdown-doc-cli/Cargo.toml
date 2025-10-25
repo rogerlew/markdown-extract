@@ -1,0 +1,8 @@
+[package]
+name = "markdown-doc-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+markdown-doc-core = { path = "../markdown-doc-core" }
+markdown-doc-config = { path = "../markdown-doc-config" }

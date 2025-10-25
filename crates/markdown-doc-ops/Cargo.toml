@@ -1,0 +1,13 @@
+[package]
+name = "markdown-doc-ops"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+markdown-doc-config = { path = "../markdown-doc-config" }
+markdown-doc-parser = { path = "../markdown-doc-parser" }
+markdown-doc-format = { path = "../markdown-doc-format" }
+markdown-doc-utils = { path = "../markdown-doc-utils" }

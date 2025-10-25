@@ -1,11 +1,11 @@
 # markdown-doc Implementation Plan
 
 ## Cross-Cutting Foundations
-- [ ] Establish `markdown-doc` workspace members (`markdown-doc-core`, `markdown-doc-cli`, shared crates) in `Cargo.toml`
-- [ ] Add shared utilities crate for config resolution, path filters, parallel executor, atomic writer
+- [x] Establish `markdown-doc` workspace members (`markdown-doc-core`, `markdown-doc-cli`, shared crates) in `Cargo.toml`
+- [x] Add shared utilities crate for config resolution, path filters, parallel executor, atomic writer
 - [ ] Wire CI pipelines (fmt, clippy, test, benchmarks) and CONTRIBUTING notes
-- [ ] Create `tests/markdown-doc/` fixture corpus approximating 388-file repo
-- [ ] Document architecture overview in `docs/markdown-doc/README.md`
+- [x] Create `tests/markdown-doc/` fixture corpus approximating 388-file repo
+- [x] Document architecture overview in `docs/markdown-doc/README.md`
 
 ## Phase 1 — MVP Vertical Slice
 - [ ] Implement configuration resolver with precedence (flags → local config → repo root → defaults)
