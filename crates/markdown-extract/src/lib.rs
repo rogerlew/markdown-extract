@@ -2,7 +2,9 @@ mod heading;
 mod line;
 mod state;
 
-pub use heading::{detect_heading, HeadingKind, MarkdownHeading, ParsedHeading};
+pub use heading::{
+    detect_heading, normalize_heading_text, HeadingKind, MarkdownHeading, ParsedHeading,
+};
 
 use line::{read_lines, LineRecord};
 use regex::Regex;

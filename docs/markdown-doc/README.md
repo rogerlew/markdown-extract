@@ -27,6 +27,16 @@ The `markdown-doc-config` crate resolves configuration using the precedence stac
 
 Loader output is a typed `Config` struct covering `project`, `catalog`, and `lint` settings. Headings, glob patterns, and lint rule identifiers are validated on load, and each resolved layer is tracked via `ConfigSources` so higher-level crates can surface provenance in diagnostics.
 
+## Parser Spans
+
+`markdown-doc-parser` exposes a `ParserContext` that reuses `markdown-extract` heading detection to emit `DocumentSection` spans. Each span includes:
+
+- Normalised heading text and stable anchor identifiers.
+- Section byte ranges (heading through trailing body) plus per-line copies of the raw content.
+- Path metadata (`absolute`/`relative`) filtered through config-driven include/exclude patterns.
+
+Anchors are generated with Markdown-style slug rules and the heading normaliser is re-exported for lint/catalog consumers. Parser tests cover ATX/Setext headings, YAML front matter, fenced/indented code blocks, and Unicode titles so downstream engines can rely on consistent offsets.
+
 ## Roadmap
 
 The accompanying `markdown-doc.plan.nd` file tracks phased milestones (MVP, Quality Gates, Refactoring Support, Intelligence). Update the checklists as features land to keep the roadmap accurate.

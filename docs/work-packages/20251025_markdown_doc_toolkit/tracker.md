@@ -6,13 +6,12 @@
 
 **Started**: 2025-10-25  
 **Current phase**: Implementation (Phase 1 foundations)  
-**Last updated**: 2025-10-25 (Config loader baseline)  
+**Last updated**: 2025-10-25 (Config loader + parser spans)  
 **Next milestone**: Complete Cross-Cutting Foundations checklist and Phase 1 MVP slice
 
 ## Task Board
 
 ### Ready / Backlog
-- [ ] Implement markdown parsing layer with enriched spans (**Agent 2**)
 - [ ] Build lint engine skeleton with rule plug-in architecture (**Agent 3**)
 - [ ] Draft CI workflows (fmt, clippy, test, benchmarks) (**Agent 4**)
 
@@ -25,6 +24,7 @@
 ### Done
 - [x] Bootstrap workspace crates, fixtures, and docs (2025-10-25)
 - [x] Flesh out configuration resolver with precedence, defaults, and validation (**Agent 1**, 2025-10-25)
+- [x] Implement markdown parsing layer with enriched spans (**Agent 2**, 2025-10-25)
 
 ## Timeline
 
@@ -125,6 +125,29 @@
 ```bash
 cargo fmt
 cargo test -p markdown-doc-config
+```
+
+### 2025-10-25: Parser spans implementation
+**Agent/Contributor**: Agent 2 (Codex)
+
+**Work completed**:
+- Implemented `ParserContext` in `markdown-doc-parser` to surface `DocumentSection` data with normalized headings, anchors, and byte ranges.
+- Reused `markdown-extract` heading detection while mapping sections with hierarchical depth boundaries and path-scoped filters from configuration.
+- Added anchor generation utility and re-exported heading normalization for downstream lint/catalog rules.
+- Introduced parser-focused integration tests covering front matter, fenced/indented code blocks, Setext headings, Unicode titles, and include/exclude scope checks.
+
+**Blockers encountered**:
+- None
+
+**Next steps**:
+1. Wire parser spans into ops/lint layers to drive catalog and rule evaluation.
+2. Extend tests to cover large fixtures once lint engine lands.
+3. Surface streaming APIs if performance profiling reveals hotspots.
+
+**Test results**:
+```bash
+cargo fmt
+cargo test -p markdown-doc-parser
 ```
 
 ## Watch List

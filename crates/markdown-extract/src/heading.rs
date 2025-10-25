@@ -144,7 +144,7 @@ fn match_setext_depth(line: &str) -> Option<(usize, char)> {
     Some((depth, fence_char))
 }
 
-fn normalize_heading_text(input: &str) -> String {
+pub fn normalize_heading_text(input: &str) -> String {
     let mut text_segments = Vec::new();
     let parser = Parser::new_ext(input, Options::empty());
 
