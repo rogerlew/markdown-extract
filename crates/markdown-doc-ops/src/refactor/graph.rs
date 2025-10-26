@@ -277,7 +277,7 @@ struct TargetKey {
 
 impl TargetKey {
     fn new(path: &Path, anchor: Option<&str>) -> Self {
-    let normalized_anchor = anchor.map(normalize_anchor_fragment);
+        let normalized_anchor = anchor.map(normalize_anchor_fragment);
         TargetKey {
             path: path.to_path_buf(),
             anchor: normalized_anchor,

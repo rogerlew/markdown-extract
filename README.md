@@ -654,6 +654,29 @@ allow_empty = false
 
 By default, validate respects `.markdown-doc-ignore` patterns. Use `--no-ignore` to validate all files, and `--quiet` to suppress output when all checks pass.
 
+#### `mv` - Safe Markdown Renames
+
+Renames Markdown files (or moves them into new directories) while updating every in-repo reference via the link graph.
+
+```console
+# Preview the rename without writing
+$ markdown-doc mv intro.md docs/intro.md --dry-run
+
+# Apply the rename, overwriting destination if present
+$ markdown-doc mv intro.md docs/intro.md --force
+
+# Skip .bak backups or emit machine-readable output
+$ markdown-doc mv intro.md docs/intro.md --no-backup --json
+```
+
+Key behaviours:
+- Builds on the Phase 3 link graph to locate inbound/outbound links, images, and reference definitions.
+- Relative links are rewritten automatically (`guide.md` → `docs/intro.md` updates `../` segments as needed).
+- Dry-run prints unified diffs for every affected file without touching disk.
+- Backups (`*.bak`) are created by default; use `--no-backup` to opt out. `--force` enables overwriting existing destinations.
+- Honor `.markdown-doc-ignore` unless `--no-ignore` is supplied (ignored files keep their original links).
+- JSON mode returns a structured summary (`status`, `original`, `output`, optional `diff`) suitable for automation.
+
 #### Link Graph & Rewrite Utilities
 
 Phase 3 introduces a reusable refactor engine in `markdown-doc-ops::refactor` that higher-level commands (`markdown-doc mv`, `markdown-doc refs`, future rename workflows) will leverage.

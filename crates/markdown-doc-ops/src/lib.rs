@@ -9,6 +9,7 @@ mod schema;
 mod toc;
 
 use std::ffi::OsStr;
+use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -27,7 +28,9 @@ use similar::TextDiff;
 use thiserror::Error;
 use walkdir::WalkDir;
 
+use crate::paths::normalize_path;
 use crate::refactor::graph::LinkGraph;
+use crate::refactor::rewrite::{plan_file_moves, FileMove, RewriteError};
 use crate::schema::SchemaEngine;
 
 /// Primary entry point for catalog and lint operations.
@@ -327,6 +330,286 @@ impl Operations {
         LinkGraph::build(&self.parser, &self.config.project.root, &targets)
     }
 
+    /// Move/rename a Markdown file while updating inbound/outbound references.
+    pub fn mv(&self, options: MvOptions) -> Result<MvOutcome, OperationError> {
+        let root = &self.config.project.root;
+        let (source_rel, source_abs) = resolve_input_path(root, &options.source, true, "source")?;
+        if !is_markdown_path(&source_rel.to_string_lossy()) {
+            return Err(OperationError::InvalidInput(format!(
+                "source '{}' is not a Markdown file",
+                source_rel.display()
+            )));
+        }
+        let source_meta = fs::metadata(&source_abs).map_err(|source| OperationError::Io {
+            path: source_abs.clone(),
+            source,
+        })?;
+        if !source_meta.is_file() {
+            return Err(OperationError::InvalidInput(format!(
+                "source '{}' must be a file",
+                source_rel.display()
+            )));
+        }
+
+        let (dest_rel, dest_abs) =
+            resolve_input_path(root, &options.destination, false, "destination")?;
+        if !is_markdown_path(&dest_rel.to_string_lossy()) {
+            return Err(OperationError::InvalidInput(format!(
+                "destination '{}' must end with .md or .markdown",
+                dest_rel.display()
+            )));
+        }
+        if source_rel == dest_rel {
+            return Err(OperationError::InvalidInput(
+                "source and destination refer to the same path".into(),
+            ));
+        }
+        if dest_abs.exists() && !options.force {
+            return Err(OperationError::InvalidInput(format!(
+                "destination '{}' already exists (use --force to overwrite)",
+                dest_rel.display()
+            )));
+        }
+
+        let mut targets = self.collect_targets(&options.scan)?;
+        if !targets.contains(&source_rel) {
+            targets.push(source_rel.clone());
+            targets.sort();
+            targets.dedup();
+        }
+        let graph = LinkGraph::build(&self.parser, root, &targets)?;
+
+        let plan = plan_file_moves(
+            &graph,
+            root,
+            &[FileMove {
+                from: source_rel.clone(),
+                to: dest_rel.clone(),
+            }],
+        )?;
+
+        #[derive(Clone)]
+        struct ProcessedEdit {
+            edit: crate::refactor::rewrite::FileEdit,
+            original_contents: String,
+            diff: Option<String>,
+            status: MvFileStatus,
+        }
+
+        let mut processed = Vec::new();
+        for edit in &plan.file_edits {
+            let entry = graph.file(&edit.original_path).ok_or_else(|| {
+                OperationError::Rewrite(RewriteError::MissingFile {
+                    path: edit.original_path.clone(),
+                })
+            })?;
+            let original_contents = entry.contents().to_string();
+            let diff = if original_contents == edit.updated_contents {
+                None
+            } else {
+                Some(build_diff(
+                    &edit.original_path,
+                    &original_contents,
+                    &edit.updated_contents,
+                ))
+            };
+            let status = if edit.original_path != edit.output_path {
+                MvFileStatus::Relocated
+            } else if diff.is_some() {
+                MvFileStatus::Updated
+            } else {
+                MvFileStatus::Unchanged
+            };
+            processed.push(ProcessedEdit {
+                edit: edit.clone(),
+                original_contents,
+                diff,
+                status,
+            });
+        }
+
+        let changes: Vec<MvFileChange> = processed
+            .iter()
+            .map(|edit| MvFileChange {
+                original_path: edit.edit.original_path.clone(),
+                output_path: edit.edit.output_path.clone(),
+                status: edit.status,
+                diff: if options.dry_run {
+                    edit.diff.clone()
+                } else {
+                    None
+                },
+            })
+            .collect();
+
+        if options.dry_run {
+            return Ok(MvOutcome {
+                changes,
+                exit_code: 0,
+                dry_run: true,
+            });
+        }
+
+        struct AppliedOperation {
+            original_path: PathBuf,
+            output_path: PathBuf,
+            original_contents: String,
+            dest_original_contents: Option<String>,
+            rename: bool,
+        }
+
+        let mut applied: Vec<AppliedOperation> = Vec::new();
+
+        let apply_result: Result<(), OperationError> = (|| {
+            // Apply relocations first so references point to valid destination.
+            for edit in processed
+                .iter()
+                .filter(|edit| edit.edit.original_path != edit.edit.output_path)
+            {
+                let source_abs = root.join(&edit.edit.original_path);
+                let dest_abs = root.join(&edit.edit.output_path);
+
+                fs::create_dir_all(dest_abs.parent().ok_or_else(|| {
+                    OperationError::InvalidInput(format!(
+                        "destination '{}' does not have a parent directory",
+                        edit.edit.output_path.display()
+                    ))
+                })?)
+                .map_err(|source| OperationError::Io {
+                    path: dest_abs.clone(),
+                    source,
+                })?;
+
+                let mut dest_original_contents = None;
+                if dest_abs.exists() {
+                    if !options.force {
+                        return Err(OperationError::InvalidInput(format!(
+                            "destination '{}' already exists",
+                            edit.edit.output_path.display()
+                        )));
+                    }
+                    dest_original_contents =
+                        Some(fs::read_to_string(&dest_abs).map_err(|source| {
+                            OperationError::Io {
+                                path: dest_abs.clone(),
+                                source,
+                            }
+                        })?);
+                    if options.create_backup {
+                        maybe_create_backup(&dest_abs).map_err(|source| OperationError::Io {
+                            path: dest_abs.clone(),
+                            source,
+                        })?;
+                    }
+                    fs::remove_file(&dest_abs).map_err(|source| OperationError::Io {
+                        path: dest_abs.clone(),
+                        source,
+                    })?;
+                }
+
+                if options.create_backup && source_abs.exists() {
+                    maybe_create_backup(&source_abs).map_err(|source| OperationError::Io {
+                        path: source_abs.clone(),
+                        source,
+                    })?;
+                }
+
+                fs::rename(&source_abs, &dest_abs).map_err(|source| OperationError::Io {
+                    path: source_abs.clone(),
+                    source,
+                })?;
+
+                if edit.status != MvFileStatus::Unchanged {
+                    atomic_write(&dest_abs, &edit.edit.updated_contents).map_err(|source| {
+                        OperationError::Io {
+                            path: dest_abs.clone(),
+                            source,
+                        }
+                    })?;
+                }
+
+                applied.push(AppliedOperation {
+                    original_path: edit.edit.original_path.clone(),
+                    output_path: edit.edit.output_path.clone(),
+                    original_contents: edit.original_contents.clone(),
+                    dest_original_contents,
+                    rename: true,
+                });
+            }
+
+            // Update files that remain in place.
+            for edit in processed
+                .iter()
+                .filter(|edit| edit.edit.original_path == edit.edit.output_path)
+            {
+                if edit.status == MvFileStatus::Unchanged {
+                    continue;
+                }
+
+                let path_abs = root.join(&edit.edit.original_path);
+                if options.create_backup && path_abs.exists() {
+                    maybe_create_backup(&path_abs).map_err(|source| OperationError::Io {
+                        path: path_abs.clone(),
+                        source,
+                    })?;
+                }
+
+                atomic_write(&path_abs, &edit.edit.updated_contents).map_err(|source| {
+                    OperationError::Io {
+                        path: path_abs.clone(),
+                        source,
+                    }
+                })?;
+
+                applied.push(AppliedOperation {
+                    original_path: edit.edit.original_path.clone(),
+                    output_path: edit.edit.output_path.clone(),
+                    original_contents: edit.original_contents.clone(),
+                    dest_original_contents: None,
+                    rename: false,
+                });
+            }
+
+            Ok(())
+        })();
+
+        if let Err(err) = apply_result {
+            // Attempt rollback best-effort.
+            for op in applied.iter().rev() {
+                if op.rename {
+                    let dest_abs = root.join(&op.output_path);
+                    let original_abs = root.join(&op.original_path);
+                    if dest_abs.exists() {
+                        if let Err(rename_err) = fs::rename(&dest_abs, &original_abs) {
+                            let _ = atomic_write(&original_abs, &op.original_contents);
+                            if let Some(dest_contents) = &op.dest_original_contents {
+                                let _ = atomic_write(&dest_abs, dest_contents);
+                            }
+                            let _ = rename_err;
+                        } else if let Some(dest_contents) = &op.dest_original_contents {
+                            let _ = atomic_write(&dest_abs, dest_contents);
+                        }
+                    } else {
+                        let _ = atomic_write(&original_abs, &op.original_contents);
+                        if let Some(dest_contents) = &op.dest_original_contents {
+                            let _ = atomic_write(&dest_abs, dest_contents);
+                        }
+                    }
+                } else {
+                    let path_abs = root.join(&op.original_path);
+                    let _ = atomic_write(&path_abs, &op.original_contents);
+                }
+            }
+            return Err(err);
+        }
+
+        Ok(MvOutcome {
+            changes,
+            exit_code: 0,
+            dry_run: false,
+        })
+    }
+
     fn render_lint(
         &self,
         report: &LintRenderData,
@@ -537,6 +820,65 @@ fn filter_paths(files: Vec<PathBuf>, filters: &[PathBuf], root: &Path) -> Vec<Pa
     }
 }
 
+fn resolve_input_path(
+    root: &Path,
+    provided: &Path,
+    must_exist: bool,
+    label: &str,
+) -> Result<(PathBuf, PathBuf), OperationError> {
+    let candidate = if provided.is_absolute() {
+        provided.to_path_buf()
+    } else {
+        root.join(provided)
+    };
+    let normalized = normalize_path(candidate);
+
+    if !normalized.starts_with(root) {
+        return Err(OperationError::InvalidInput(format!(
+            "{label} '{}' resolves outside the project root",
+            provided.display()
+        )));
+    }
+
+    if must_exist && !normalized.exists() {
+        return Err(OperationError::InvalidInput(format!(
+            "{label} '{}' does not exist",
+            provided.display()
+        )));
+    }
+
+    let relative = normalized
+        .strip_prefix(root)
+        .map_err(|_| {
+            OperationError::InvalidInput(format!(
+                "{label} '{}' could not be resolved relative to project root",
+                provided.display()
+            ))
+        })?
+        .to_path_buf();
+
+    Ok((relative, normalized))
+}
+
+fn maybe_create_backup(path: &Path) -> io::Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let backup = derive_backup_path(path)
+        .ok_or_else(|| io::Error::other("cannot derive backup filename"))?;
+    if let Some(parent) = backup.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::copy(path, &backup)?;
+    Ok(())
+}
+
+fn derive_backup_path(path: &Path) -> Option<PathBuf> {
+    let mut name = path.file_name()?.to_os_string();
+    name.push(".bak");
+    Some(path.with_file_name(name))
+}
+
 fn build_catalog_entry(path: &Path, sections: Vec<DocumentSection>) -> CatalogEntry {
     let headings = sections
         .into_iter()
@@ -626,6 +968,41 @@ pub struct ValidateOutcome {
     pub exit_code: i32,
 }
 
+/// Options for the mv command.
+pub struct MvOptions {
+    pub scan: ScanOptions,
+    pub source: PathBuf,
+    pub destination: PathBuf,
+    pub dry_run: bool,
+    pub force: bool,
+    pub create_backup: bool,
+    pub quiet: bool,
+    pub json: bool,
+}
+
+/// Result describing the effects of a move/rename operation.
+pub struct MvOutcome {
+    pub changes: Vec<MvFileChange>,
+    pub exit_code: i32,
+    pub dry_run: bool,
+}
+
+/// Individual file update surfaced by the mv command.
+pub struct MvFileChange {
+    pub original_path: PathBuf,
+    pub output_path: PathBuf,
+    pub status: MvFileStatus,
+    pub diff: Option<String>,
+}
+
+/// Status classification for mv outcomes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MvFileStatus {
+    Updated,
+    Relocated,
+    Unchanged,
+}
+
 /// Options for the TOC command.
 pub struct TocOptions {
     pub scan: ScanOptions,
@@ -681,6 +1058,10 @@ pub enum OperationError {
     },
     #[error("schema '{name}' not found")]
     SchemaNotFound { name: String },
+    #[error("{0}")]
+    InvalidInput(String),
+    #[error("rewrite failure: {0}")]
+    Rewrite(#[from] RewriteError),
     #[error("{0}")]
     Other(String),
 }

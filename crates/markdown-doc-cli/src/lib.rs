@@ -7,9 +7,10 @@ use markdown_doc_core::MarkdownDoc;
 use markdown_doc_format::{CatalogFormat, LintFormat, ValidateFormat};
 use markdown_doc_ops::OperationError;
 use markdown_doc_ops::{
-    CatalogOptions, CatalogOutcome, LintOptions, LintOutcome, ScanOptions, TocMode, TocOptions,
-    TocOutcome, ValidateOptions, ValidateOutcome,
+    CatalogOptions, CatalogOutcome, LintOptions, LintOutcome, MvFileStatus, MvOptions, ScanOptions,
+    TocMode, TocOptions, TocOutcome, ValidateOptions, ValidateOutcome,
 };
+use serde_json::json;
 
 /// Entry point for CLI execution. Returns the desired exit code.
 pub fn run() -> Result<i32> {
@@ -24,6 +25,7 @@ pub fn run() -> Result<i32> {
         Command::Lint(args) => handle_lint(ops, args),
         Command::Validate(args) => handle_validate(ops, args),
         Command::Toc(args) => handle_toc(ops, args),
+        Command::Mv(args) => handle_mv(ops, args),
     }
 }
 
@@ -182,6 +184,93 @@ fn handle_toc(ops: &markdown_doc_ops::Operations, args: TocArgs) -> Result<i32> 
     Ok(exit_code)
 }
 
+fn handle_mv(ops: &markdown_doc_ops::Operations, args: MvArgs) -> Result<i32> {
+    let MvArgs {
+        source,
+        destination,
+        dry_run,
+        force,
+        no_backup,
+        quiet,
+        json,
+        no_ignore,
+    } = args;
+
+    let scan = ScanOptions {
+        paths: Vec::new(),
+        staged: false,
+        respect_ignore: !no_ignore,
+    };
+
+    let options = MvOptions {
+        scan,
+        source,
+        destination,
+        dry_run,
+        force,
+        create_backup: !no_backup,
+        quiet,
+        json,
+    };
+
+    match ops.mv(options) {
+        Ok(outcome) => {
+            if json {
+                let payload = json!({
+                    "dry_run": outcome.dry_run,
+                    "files": outcome.changes.iter().map(|change| {
+                        json!({
+                            "original": change.original_path,
+                            "output": change.output_path,
+                            "status": match change.status {
+                                MvFileStatus::Updated => "updated",
+                                MvFileStatus::Relocated => "relocated",
+                                MvFileStatus::Unchanged => "unchanged",
+                            },
+                            "diff": change.diff
+                        })
+                    }).collect::<Vec<_>>()
+                });
+                println!("{}", serde_json::to_string_pretty(&payload)?);
+            } else if !quiet {
+                for change in &outcome.changes {
+                    match change.status {
+                        MvFileStatus::Relocated => {
+                            println!(
+                                "📦 moved {} -> {}",
+                                change.original_path.display(),
+                                change.output_path.display()
+                            );
+                        }
+                        MvFileStatus::Updated => {
+                            println!("✏️  updated {}", change.original_path.display());
+                        }
+                        MvFileStatus::Unchanged => {
+                            println!("ℹ️  no changes for {}", change.original_path.display());
+                        }
+                    }
+                    if let Some(diff) = &change.diff {
+                        print!("{diff}");
+                        if !diff.ends_with('\n') {
+                            println!();
+                        }
+                    }
+                }
+            }
+            Ok(outcome.exit_code)
+        }
+        Err(OperationError::InvalidInput(message)) => {
+            eprintln!("{message}");
+            Ok(1)
+        }
+        Err(OperationError::Io { path, source }) => {
+            eprintln!("I/O error on {}: {}", path.display(), source);
+            Ok(4)
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
 fn emit(content: &str) -> Result<()> {
     print!("{}", content);
     if !content.ends_with('\n') {
@@ -212,6 +301,8 @@ enum Command {
     Validate(ValidateArgs),
     /// Synchronise table-of-contents blocks
     Toc(TocArgs),
+    /// Move or rename a Markdown file and update references
+    Mv(MvArgs),
 }
 
 #[derive(Args)]
@@ -298,6 +389,34 @@ struct TocArgs {
     /// Suppress output when no changes are required
     #[arg(long)]
     quiet: bool,
+}
+
+#[derive(Args)]
+struct MvArgs {
+    /// Source Markdown file (relative to project root)
+    #[arg(value_name = "SOURCE")]
+    source: PathBuf,
+    /// Destination Markdown file
+    #[arg(value_name = "DEST")]
+    destination: PathBuf,
+    /// Preview changes without writing
+    #[arg(long = "dry-run")]
+    dry_run: bool,
+    /// Overwrite destination if it already exists
+    #[arg(long = "force")]
+    force: bool,
+    /// Disable .bak backups for modified files
+    #[arg(long = "no-backup")]
+    no_backup: bool,
+    /// Suppress per-file logs (errors still printed)
+    #[arg(long = "quiet")]
+    quiet: bool,
+    /// Emit machine-readable JSON summary
+    #[arg(long = "json")]
+    json: bool,
+    /// Ignore `.markdown-doc-ignore` patterns
+    #[arg(long = "no-ignore")]
+    no_ignore: bool,
 }
 
 #[derive(Clone, Copy, ValueEnum)]

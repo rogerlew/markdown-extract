@@ -342,6 +342,30 @@ cargo test --all
 cargo test -p markdown-doc-ops
 ```
 
+### 2025-10-28: `markdown-doc mv` command
+**Agent/Contributor**: Agent 9 (Codex)
+
+**Work completed**:
+- Wired `markdown-doc mv` CLI (dry-run, JSON, force, no-backup, no-ignore, quiet flags) to the refactor engine.
+- Extended ops layer with transactional rename support, including backups, rollback logic, and ignore-aware graph construction.
+- Added integration tests for mv (ops + CLI) covering dry-run diffs, backups, ignore handling, and link rewrites.
+- Documented mv usage in README + architecture primer and refreshed Agent prompt.
+
+**Blockers encountered**:
+- None.
+
+**Next steps**:
+1. Build `markdown-doc refs` on top of the same engine (Phase 3 follow-up).
+2. Incorporate directory move support and batched operations in future agents.
+3. Explore caching link graphs across successive refactor commands for large repositories.
+
+**Test results**:
+```bash
+cargo fmt
+cargo clippy --all-targets --all-features
+cargo test --all
+```
+
 ### 2025-10-26: TOC command & severity tuning
 **Agent/Contributor**: Agent 7 (Codex)
 

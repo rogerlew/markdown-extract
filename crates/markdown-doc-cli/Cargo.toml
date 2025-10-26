@@ -17,6 +17,7 @@ markdown-doc-core = { path = "../markdown-doc-core" }
 markdown-doc-config = { path = "../markdown-doc-config" }
 markdown-doc-ops = { path = "../markdown-doc-ops" }
 markdown-doc-format = { path = "../markdown-doc-format" }
+serde_json = "1.0"
 
 [dev-dependencies]
 assert_cmd = "2.0"

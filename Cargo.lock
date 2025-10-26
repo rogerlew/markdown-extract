@@ -448,6 +448,7 @@ dependencies = [
  "markdown-doc-format",
  "markdown-doc-ops",
  "predicates",
+ "serde_json",
  "tempfile",
 ]
 

@@ -87,6 +87,15 @@ Phase&nbsp;3 introduces `markdown-doc-ops::refactor`, a foundational layer for p
 
 This architecture keeps refactor logic CLI-agnostic: Phase 3 commands can orchestrate filesystem moves, render diffs, or stream patches without re-parsing Markdown or reimplementing link resolution.
 
+### `markdown-doc mv`
+
+The `mv` CLI command layers on top of the refactor engine to provide safe Markdown renames:
+
+- CLI surface: `markdown-doc mv <SOURCE> <DEST>` with `--dry-run`, `--force`, `--no-backup`, `--json`, `--quiet`, and `--no-ignore`.
+- Uses the link graph to update every inbound reference (inline links, reference definitions, images) and outbound links within the moved file.
+- Dry-run renders unified diffs; real runs perform atomic writes with optional `.bak` backups. Operations roll back on failure using in-memory snapshots.
+- Exit codes align with the toolchain (0 success, 1 validation error, 4 I/O error); JSON mode mirrors the per-file status tuples consumed by agents.
+
 ## CI & Benchmarks
 
 Continuous integration now enforces formatting, linting, and tests for every push/PR via `.github/workflows/build_and_test.yml`:

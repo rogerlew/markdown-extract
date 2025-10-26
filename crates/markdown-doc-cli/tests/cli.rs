@@ -186,3 +186,93 @@ fn toc_diff_outputs_unified_diff() {
         .stdout(predicate::str::contains("- [Old](#old)"))
         .stdout(predicate::str::contains("+- [Details](#details)"));
 }
+
+#[test]
+fn mv_dry_run_outputs_diff() {
+    let temp = TempDir::new().expect("tempdir");
+    setup_file(
+        temp.path(),
+        ".markdown-doc.toml",
+        r#"
+        [lint]
+        rules = ["broken-links"]
+        "#,
+    );
+    setup_file(
+        temp.path(),
+        "guide.md",
+        "# Guide\n\nSee [Intro](intro.md#overview).\n",
+    );
+    setup_file(
+        temp.path(),
+        "intro.md",
+        "# Intro\n\n## Overview\n\nReturn to [Guide](guide.md#guide).\n",
+    );
+
+    let mut cmd = Command::cargo_bin("markdown-doc").expect("binary");
+    let assert = cmd
+        .current_dir(temp.path())
+        .args(["mv", "intro.md", "docs/intro.md", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--- a/guide.md"))
+        .stdout(predicate::str::contains(
+            "+See [Intro](docs/intro.md#overview).",
+        ));
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).expect("stdout utf8");
+    assert!(stdout.contains("📦 moved intro.md -> docs/intro.md"));
+    assert!(
+        temp.path().join("intro.md").exists(),
+        "dry run should not move files"
+    );
+    assert!(
+        !temp.path().join("docs/intro.md").exists(),
+        "dry run should not create destination"
+    );
+}
+
+#[test]
+fn mv_updates_files_and_links() {
+    let temp = TempDir::new().expect("tempdir");
+    setup_file(
+        temp.path(),
+        ".markdown-doc.toml",
+        r#"
+        [lint]
+        rules = ["broken-links"]
+        "#,
+    );
+    setup_file(
+        temp.path(),
+        "guide.md",
+        "# Guide\n\nSee [Intro](intro.md#overview).\n",
+    );
+    setup_file(
+        temp.path(),
+        "intro.md",
+        "# Intro\n\n## Overview\n\nReturn to [Guide](guide.md#guide).\n",
+    );
+
+    let mut cmd = Command::cargo_bin("markdown-doc").expect("binary");
+    cmd.current_dir(temp.path())
+        .args(["mv", "intro.md", "docs/intro.md", "--no-backup"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "📦 moved intro.md -> docs/intro.md",
+        ))
+        .stdout(predicate::str::contains("✏️  updated guide.md"));
+
+    assert!(
+        !temp.path().join("intro.md").exists(),
+        "source file should be relocated"
+    );
+    let new_file = temp.path().join("docs/intro.md");
+    assert!(new_file.exists(), "destination file should be created");
+    let guide = fs::read_to_string(temp.path().join("guide.md")).expect("read guide");
+    assert!(
+        guide.contains("(docs/intro.md#overview)"),
+        "guide link should be rewritten"
+    );
+}
