@@ -16,6 +16,9 @@
 - [ ] README quickstart QA & documentation review (**Claude**) – see `prompts/active/claude_readme_quickstart_review.md`
 - [ ] Draft Phase 3 refactoring prompts (`mv`, `refs`, link graph engine) (**Codex PM**)
 - [ ] Identify additional fixtures for Phase 3 stress tests (nested directories, mixed links) (**Future Agent**)
+- [ ] Build link graph + rewrite planning engine (**Agent 8**) – `prompts/active/agent8_phase3_link_graph.md`
+- [ ] Implement `markdown-doc mv` command with safe rewrites (**Agent 9**) – `prompts/active/agent9_phase3_mv.md`
+- [ ] Implement `markdown-doc refs` command & stress-test fixtures (**Agent 10**) – `prompts/active/agent10_phase3_refs.md`
 
 ### In Progress
 - [ ] Monitor benchmark baseline; rerun after significant parser/IO changes
@@ -316,6 +319,29 @@ cargo clippy --all-targets --all-features
 cargo test --all
 ```
 
+### 2025-10-27: Link graph + rewrite planning
+**Agent/Contributor**: Agent 8 (Codex)
+
+**Work completed**:
+- Added a public `refactor::graph` module that captures anchors, inline links, and reference definitions with byte spans plus anchor-aware backreferences.
+- Implemented `refactor::rewrite::plan_file_moves`, producing `RewritePlan`/`FileEdit` payloads so future CLI commands can adjust relative links during renames.
+- Shared path utilities across lint + refactor (`paths.rs`) and exposed `Operations::link_graph` for consumers.
+- Created integration tests (`crates/markdown-doc-ops/tests/graph.rs`, `crates/markdown-doc-ops/tests/rewrite.rs`) exercising graph traversal and rename rewrites.
+- Documented the new engine in `README.md` and `docs/markdown-doc/README.md`.
+
+**Blockers encountered**:
+- None.
+
+**Next steps**:
+1. Layer CLI commands (`markdown-doc mv`, `markdown-doc refs`) on top of the new refactor APIs.
+2. Extend rewrite planning to handle anchor renames and multi-file payload edits once specifications land.
+3. Consider caching link graphs across operations to avoid repeated parsing for large repositories.
+
+**Test results**:
+```bash
+cargo test -p markdown-doc-ops
+```
+
 ### 2025-10-26: TOC command & severity tuning
 **Agent/Contributor**: Agent 7 (Codex)
 
@@ -340,6 +366,21 @@ cargo clippy --all-targets --all-features
 cargo test --all
 markdown-doc toc --path README.md --check
 ```
+
+### 2025-10-26: Phase 3 kickoff planning
+**Agent/Contributor**: Codex PM Agent
+
+**Work completed**:
+- Authored Phase 3 prompts for link graph engine (Agent 8), `markdown-doc mv` (Agent 9), and `markdown-doc refs` + stress fixtures (Agent 10).
+- Updated implementation plan and tracker backlog with new assignments and immediate next steps.
+- Confirmed workspace is clean after README QA pass; ready for next agent wave.
+
+**Blockers encountered**:
+- None – awaiting assignment of Phase 3 agents and README QA confirmation.
+
+**Next steps**:
+1. Assign Agents 8–10 and coordinate deliverable sequencing (graph → mv → refs).
+2. After prompt completion, refresh plan/timeline and evaluate remaining backlog (CI alignment, Phase 4 scoping).
 
 ### 2025-10-26: README Quickstart Review & Validation
 **Agent/Contributor**: Claude (QA/Documentation Review)

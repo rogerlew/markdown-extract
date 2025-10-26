@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use globset::GlobMatcher;
@@ -15,6 +15,7 @@ use strsim::normalized_levenshtein;
 use crate::{
     anchors::normalize_anchor_fragment,
     lines::{byte_to_line, compute_line_offsets},
+    paths::{is_external, is_markdown_path, resolve_relative_path, split_link_target},
     schema::SchemaEngine,
     toc,
     toc::{TocBlock, TocEntry},
@@ -616,68 +617,4 @@ fn evaluate_toc_sync(snapshot: &FileSnapshot, env: &LintEnvironment) -> Vec<Rule
     findings
 }
 
-fn is_external(target: &str) -> bool {
-    let lower = target.to_ascii_lowercase();
-    lower.starts_with("http://")
-        || lower.starts_with("https://")
-        || lower.starts_with("mailto:")
-        || lower.starts_with("tel:")
-        || lower.starts_with("data:")
-}
-
-fn is_markdown_path(path: &str) -> bool {
-    let lower = path.to_ascii_lowercase();
-    lower.ends_with(".md") || lower.ends_with(".markdown")
-}
-
-fn split_link_target(target: &str) -> (&str, Option<&str>) {
-    if let Some((path, anchor)) = target.split_once('#') {
-        if path.is_empty() {
-            ("", Some(anchor))
-        } else {
-            (path, Some(anchor))
-        }
-    } else if let Some(stripped) = target.strip_prefix('#') {
-        ("", Some(stripped))
-    } else {
-        (target, None)
-    }
-}
-
-struct ResolvedPath {
-    relative: PathBuf,
-    absolute: PathBuf,
-}
-
-fn resolve_relative_path(base: &Path, target: &str, root: &Path) -> ResolvedPath {
-    let base_absolute = root.join(base);
-    let base_dir = base_absolute.parent().unwrap_or(root);
-    let mut combined = if target.starts_with('/') {
-        root.join(target.trim_start_matches('/'))
-    } else {
-        base_dir.join(target)
-    };
-    combined = normalize_path(combined);
-    let relative = combined
-        .strip_prefix(root)
-        .map(|path| path.to_path_buf())
-        .unwrap_or_else(|_| combined.clone());
-    ResolvedPath {
-        relative,
-        absolute: combined,
-    }
-}
-
-fn normalize_path(path: PathBuf) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            Component::CurDir => {}
-            other => normalized.push(other.as_os_str()),
-        }
-    }
-    normalized
-}
+// Path helpers now live in crate::paths.

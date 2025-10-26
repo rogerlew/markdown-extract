@@ -1335,16 +1335,16 @@ fn parse_severity_overrides(
         }
 
         if rules.is_empty() && wildcard.is_none() {
-                errors.push(
-                    ConfigValidationError::new(
-                        Some(source.clone()),
-                        format!(
-                                "lint.severity_overrides pattern '{}' produced no recognised rules",
-                                pattern.original()
-                        ),
-                    )
-                    .with_context("lint.severity_overrides"),
-                );
+            errors.push(
+                ConfigValidationError::new(
+                    Some(source.clone()),
+                    format!(
+                        "lint.severity_overrides pattern '{}' produced no recognised rules",
+                        pattern.original()
+                    ),
+                )
+                .with_context("lint.severity_overrides"),
+            );
             continue;
         }
 

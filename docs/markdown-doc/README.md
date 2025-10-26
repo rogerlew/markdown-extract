@@ -71,6 +71,22 @@ The `validate` command builds on the schema engine delivered in Phase&nbsp;2:
 
 `markdown-doc validate` mirrors the lint UX: plain output for humans, JSON for tooling, and exit codes (`0` success, `1` validation failures, `2` unknown schema, `3` runtime/config errors). This keeps lightweight linting and deep template enforcement consistent while allowing future Agent&nbsp;6 work to extend schema semantics without duplicating logic.
 
+## Refactor Engine (Link Graph + Rewrite)
+
+Phase&nbsp;3 introduces `markdown-doc-ops::refactor`, a foundational layer for path-aware refactors (`mv`, `refs`, rename workflows):
+
+- `LinkGraph::build` (or `Operations::link_graph`) walks selected Markdown files and records:
+  - Heading anchors with slug, depth, byte ranges, and source lines (`AnchorRecord`).
+  - Inline links, images, and reference definitions (`LinkRecord`, `ReferenceDefinition`) including destination byte spans to enable in-place rewrites.
+  - Backreferences keyed by `(path, anchor)` allowing callers to query every inbound edge via `links_to`.
+  - Cached file contents/line offsets (`FileGraphEntry`) so downstream consumers can diff or rewrite without re-reading disk.
+- `refactor::rewrite::plan_file_moves` consumes a `LinkGraph`, the repository root, and a set of `FileMove { from, to }` declarations. It returns a `RewritePlan` containing:
+  - Per-file `TextEdit`s with byte ranges and replacement strings ready for atomic writes.
+  - Updated output paths for moved files (e.g., writing `intro.md` content to `docs/intro.md`).
+  - Relative-path recomputation for both inbound references to moved documents and outbound links inside the moved file, handling concurrent moves and anchor fragments.
+
+This architecture keeps refactor logic CLI-agnostic: Phase 3 commands can orchestrate filesystem moves, render diffs, or stream patches without re-parsing Markdown or reimplementing link resolution.
+
 ## CI & Benchmarks
 
 Continuous integration now enforces formatting, linting, and tests for every push/PR via `.github/workflows/build_and_test.yml`:

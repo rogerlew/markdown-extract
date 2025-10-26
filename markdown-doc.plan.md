@@ -52,3 +52,5 @@
 - [x] Confirm crate layout and scaffolding approach with stakeholders
 - [x] Kick off Phase 1 tasks (config resolver, parser, catalog, lint)
 - [x] Prepare shared fixtures/bench harness and assign implementation agents
+- [ ] Launch Phase 3 refactoring efforts (link graph, mv, refs)
+- [ ] Define CI alignment plan with parent repo (fmt/clippy/test automation)

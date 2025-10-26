@@ -3,6 +3,8 @@
 mod anchors;
 mod lines;
 mod lint;
+mod paths;
+pub mod refactor;
 mod schema;
 mod toc;
 
@@ -25,6 +27,7 @@ use similar::TextDiff;
 use thiserror::Error;
 use walkdir::WalkDir;
 
+use crate::refactor::graph::LinkGraph;
 use crate::schema::SchemaEngine;
 
 /// Primary entry point for catalog and lint operations.
@@ -236,9 +239,7 @@ impl Operations {
 
             let generated_items = toc::generate_items(&sections);
             let existing_body = contents[block.start_offset..block.end_offset].to_string();
-            let line_sep = if existing_body.contains("\r\n") {
-                "\r\n"
-            } else if contents.contains("\r\n") {
+            let line_sep = if existing_body.contains("\r\n") || contents.contains("\r\n") {
                 "\r\n"
             } else {
                 "\n"
@@ -318,6 +319,12 @@ impl Operations {
             changes,
             exit_code,
         })
+    }
+
+    /// Build a link graph covering the selected targets.
+    pub fn link_graph(&self, options: ScanOptions) -> Result<LinkGraph, OperationError> {
+        let targets = self.collect_targets(&options)?;
+        LinkGraph::build(&self.parser, &self.config.project.root, &targets)
     }
 
     fn render_lint(

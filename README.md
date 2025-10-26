@@ -654,6 +654,46 @@ allow_empty = false
 
 By default, validate respects `.markdown-doc-ignore` patterns. Use `--no-ignore` to validate all files, and `--quiet` to suppress output when all checks pass.
 
+#### Link Graph & Rewrite Utilities
+
+Phase 3 introduces a reusable refactor engine in `markdown-doc-ops::refactor` that higher-level commands (`markdown-doc mv`, `markdown-doc refs`, future rename workflows) will leverage.
+
+- `Operations::link_graph(ScanOptions)` returns a `LinkGraph` capturing:
+  - Anchors with depth, byte ranges, and normalized titles (`anchors_in(path)`).
+  - Inline links, images, and reference definitions (`links_from(path)`).
+  - Backreferences with optional anchor scoping (`links_to(path, Some("anchor"))`).
+- `markdown_doc_ops::refactor::rewrite::plan_file_moves` accepts one or more `FileMove { from, to }` entries and produces a `RewritePlan` containing:
+  - `FileEdit` payloads with precise byte ranges and updated contents ready for diffing or atomic writes.
+  - Future output paths for moved files (e.g., `docs/intro.md`) so callers can orchestrate renames safely.
+  - Stable relative-path rewrites that respect simultaneous moves and preserve anchor fragments.
+
+Example (library usage):
+
+```rust
+use markdown_doc_config::{Config, LoadOptions};
+use markdown_doc_ops::{Operations, ScanOptions};
+use markdown_doc_ops::refactor::rewrite::{plan_file_moves, FileMove};
+
+let config = Config::load(LoadOptions::default())?;
+let operations = Operations::new(config.clone());
+let graph = operations.link_graph(ScanOptions::default())?;
+let plan = plan_file_moves(
+    &graph,
+    config.project.root.as_path(),
+    &[FileMove {
+        from: "intro.md".into(),
+        to: "docs/intro.md".into(),
+    }],
+)?;
+
+for edit in &plan.file_edits {
+    println!("{} -> {}", edit.original_path.display(), edit.output_path.display());
+    println!("{}", edit.updated_contents);
+}
+```
+
+Downstream tooling can serialise `RewritePlan` to unified diffs (via `similar::TextDiff`) or apply edits with the existing atomic writer utilities.
+
 ### Configuration
 
 `markdown-doc` uses a cascading configuration system with the following precedence (highest to lowest):
