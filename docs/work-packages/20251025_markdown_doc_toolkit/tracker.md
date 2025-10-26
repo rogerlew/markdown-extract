@@ -13,6 +13,7 @@
 
 ### Ready / Backlog
 - [ ] Evaluate CI workflow alignment with parent `/workdir/wepppy` pipelines before duplicating jobs (**PM/Agent 4**)
+- [ ] PM review + follow-up edits for README quickstart (Codex PM)
 
 ### In Progress
 - [ ] Monitor benchmark baseline; rerun after significant parser/IO changes
@@ -26,6 +27,7 @@
 - [x] Implement markdown parsing layer with enriched spans (**Agent 2**, 2025-10-25)
 - [x] Ship catalog generation + broken-links lint CLI slice (**Agent 3**, 2025-10-25)
 - [x] Benchmark harness delivered + baseline captured (**Agent 4**, 2025-10-25)
+- [x] Acceptance testing + README quickstart documentation (Claude, 2025-10-25)
 
 ## Timeline
 
@@ -194,6 +196,30 @@ cargo test --all
 **Test results**:
 ```bash
 cargo run -p markdown-doc-bench --release -- --path tests/markdown-doc/wepppy
+```
+
+### 2025-10-25: Acceptance testing & README updates
+**Agent/Contributor**: Claude (QA/Docs)
+
+**Work completed**:
+- Executed acceptance sweep (`cargo fmt`, `cargo clippy --all-targets --all-features`, `cargo test --all`) against the updated workspace.
+- Performed manual CLI spot-checks for `markdown-doc catalog` (Markdown/JSON) and `markdown-doc lint` (plain/JSON, staged/path filters) using WEPPpy fixtures.
+- Authored README sections covering markdown-doc quickstart, configuration examples, agent workflows, and performance benchmarks.
+
+**Blockers encountered**:
+- None; tooling behaved per spec.
+
+**Next steps**:
+1. PM review of documentation tone/coverage (pending).
+2. Plan Phase 2 briefs (expanded lint rules) now that MVP docs are in place.
+
+**Test results**:
+```bash
+cargo fmt
+cargo clippy --all-targets --all-features
+cargo test --all
+markdown-doc catalog --format json --path README.md
+markdown-doc lint --path docs/ --format plain
 ```
 
 ### 2025-10-25: CI + Benchmark Harness

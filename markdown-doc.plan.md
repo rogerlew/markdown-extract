@@ -15,8 +15,8 @@
 - [x] Deliver `catalog` command with concurrent scan, `--path` / `--staged`, Markdown + JSON outputs, atomic writes
 - [x] Deliver `lint` command with `broken-links` rule, severity levels, ignore lists, JSON/SARIF outputs
 - [x] Add CLI acceptance tests covering selective scan, exit codes, output formats
-- [ ] Benchmark `catalog` over large fixture (<5s target) and record results
-- [ ] Publish quickstart docs (setup, config, pre-commit/CI examples)
+- [x] Benchmark `catalog` over large fixture (<5s target) and record results
+- [x] Publish quickstart docs (setup, config, pre-commit/CI examples)
 
 ## Phase 2 — Quality Gates Expansion
 - [ ] Extend lint engine with `broken-anchors`, `duplicate-anchors`, `heading-hierarchy`, `required-sections`, `toc-sync`
