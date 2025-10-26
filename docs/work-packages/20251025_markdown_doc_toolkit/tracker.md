@@ -6,13 +6,12 @@
 
 **Started**: 2025-10-25  
 **Current phase**: Implementation (Phase 1 foundations)  
-**Last updated**: 2025-10-25 (Config loader + parser spans)  
+**Last updated**: 2025-10-25 (Config loader + parser spans + CI/bench)  
 **Next milestone**: Complete Cross-Cutting Foundations checklist and Phase 1 MVP slice
 
 ## Task Board
 
 ### Ready / Backlog
-- [ ] Draft CI workflows (fmt, clippy, test, benchmarks) (**Agent 4**)
 - [ ] Prepare benchmarking harness for catalog/lint performance (**Agent 4**)
 
 ### In Progress
@@ -26,6 +25,7 @@
 - [x] Flesh out configuration resolver with precedence, defaults, and validation (**Agent 1**, 2025-10-25)
 - [x] Implement markdown parsing layer with enriched spans (**Agent 2**, 2025-10-25)
 - [x] Ship catalog generation + broken-links lint CLI slice (**Agent 3**, 2025-10-25)
+- [x] Establish CI checks and benchmarking harness (**Agent 4**, 2025-10-25)
 
 ## Timeline
 
@@ -172,6 +172,31 @@ cargo test -p markdown-doc-parser
 cargo fmt
 cargo clippy --all-targets --all-features
 cargo test --all
+```
+
+### 2025-10-25: CI + Benchmark Harness
+**Agent/Contributor**: Agent 4 (Codex)
+
+**Work completed**:
+- Added Rust fmt/clippy/test enforcement in the main GitHub Actions workflow and restricted ancillary jobs to push events.
+- Created nightly/manual benchmark workflow that runs the new `markdown-doc-bench` binary and captures results as artifacts/summary.
+- Implemented reusable benchmark harness (`tools/markdown-doc-bench`) timing catalog and lint operations against the WEPPpy fixtures.
+- Documented CI/benchmark usage in the markdown-doc README.
+
+**Blockers encountered**:
+- None
+
+**Next steps**:
+1. Extend benchmark coverage once additional lint rules land.
+2. Track performance trends over time (e.g., add regression thresholds after baseline).
+3. Consider caching fixture parsing results if runs exceed targets.
+
+**Test results**:
+```bash
+cargo fmt
+cargo clippy --all-targets --all-features
+cargo test --all
+cargo run -p markdown-doc-bench -- --iterations 1 --warmup 0
 ```
 
 ## Watch List

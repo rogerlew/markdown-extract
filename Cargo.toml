@@ -12,5 +12,6 @@ members = [
     "crates/markdown-doc-core",
     "crates/markdown-doc-cli",
     "crates/markdown-doc-test-support",
+    "tools/markdown-doc-bench",
 ]
 resolver = "2"

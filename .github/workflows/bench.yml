@@ -1,0 +1,28 @@
+name: Benchmarks
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 5 * * *"
+
+jobs:
+  markdown-doc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run markdown-doc benchmarks
+        run: |
+          cargo run -p markdown-doc-bench --release -- --iterations 5 --warmup 1 \
+            | tee benchmark-results.txt
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: markdown-doc-benchmark
+          path: benchmark-results.txt
+      - name: Summarize results
+        run: |
+          {
+            echo "### markdown-doc benchmarks"
+            cat benchmark-results.txt
+          } >> "$GITHUB_STEP_SUMMARY"

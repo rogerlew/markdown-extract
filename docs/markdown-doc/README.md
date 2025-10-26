@@ -46,6 +46,24 @@ Phase 1 now wires the parser into real operations:
 
 Both commands accept selective scanning flags (`--path`, `--staged`) and share the `ScanOptions` plumbing so future operations can reuse the same targeting logic.
 
+## CI & Benchmarks
+
+Continuous integration now enforces formatting, linting, and tests for every push/PR via `.github/workflows/build_and_test.yml`:
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all --all-features
+```
+
+Nightly (or manual) benchmark runs live in `.github/workflows/bench.yml`. The harness (`tools/markdown-doc-bench`) measures `catalog` and `lint --format json` against the WEPPpy fixtures:
+
+```bash
+cargo run -p markdown-doc-bench --release -- --path tests/markdown-doc/wepppy
+```
+
+The workflow uploads `benchmark-results.txt` and writes a summary to the job output so we can track regressions over time.
+
 ## Roadmap
 
 The accompanying `markdown-doc.plan.nd` file tracks phased milestones (MVP, Quality Gates, Refactoring Support, Intelligence). Update the checklists as features land to keep the roadmap accurate.

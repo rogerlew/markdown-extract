@@ -9,3 +9,4 @@ clap = { version = "4.5", features = ["derive"] }
 markdown-doc-config = { path = "../../crates/markdown-doc-config" }
 markdown-doc-core = { path = "../../crates/markdown-doc-core" }
 markdown-doc-ops = { path = "../../crates/markdown-doc-ops" }
+markdown-doc-format = { path = "../../crates/markdown-doc-format" }
