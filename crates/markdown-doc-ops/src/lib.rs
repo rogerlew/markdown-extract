@@ -1,23 +1,21 @@
 //! High-level operations shared by markdown-doc commands.
 
+mod lint;
+
 use std::ffi::OsStr;
-use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::SystemTime;
 
-use globset::GlobMatcher;
-use markdown_doc_config::{Config, LintIgnore, LintRule, SeverityLevel};
+use markdown_doc_config::Config;
 use markdown_doc_format::{
-    CatalogEntry, CatalogFormat, CatalogRenderData, HeadingSummary, LintFinding, LintFormat,
-    LintRenderData, Renderer,
+    CatalogEntry, CatalogFormat, CatalogRenderData, HeadingSummary, LintFormat, LintRenderData,
+    Renderer,
 };
 use markdown_doc_parser::{DocumentSection, ParserContext};
 use markdown_doc_utils::atomic_write;
-use once_cell::sync::Lazy;
 use rayon::prelude::*;
-use regex::Regex;
 use thiserror::Error;
 use walkdir::WalkDir;
 
@@ -86,126 +84,39 @@ impl Operations {
         })
     }
 
-    /// Execute the broken-links lint rule and return a renderable report plus exit code.
-    pub fn lint_broken_links(&self, options: LintOptions) -> Result<LintOutcome, OperationError> {
-        if !self.config.lint.rules.contains(&LintRule::BrokenLinks) {
-            let report = LintRenderData {
-                files_scanned: 0,
-                error_count: 0,
-                warning_count: 0,
-                findings: Vec::new(),
-            };
-            let rendered = self.render_lint(&report, options.format)?;
-            return Ok(LintOutcome {
-                rendered,
-                report,
-                exit_code: 0,
-            });
-        }
-
-        let severity = self.config.lint.severity_for(LintRule::BrokenLinks);
-        if severity == SeverityLevel::Ignore {
-            let report = LintRenderData {
-                files_scanned: 0,
-                error_count: 0,
-                warning_count: 0,
-                findings: Vec::new(),
-            };
-            let rendered = self.render_lint(&report, options.format)?;
-            return Ok(LintOutcome {
-                rendered,
-                report,
-                exit_code: 0,
-            });
-        }
-
+    /// Execute configured lint rules and return a renderable report plus exit code.
+    pub fn lint(&self, options: LintOptions) -> Result<LintOutcome, OperationError> {
         let targets = self.collect_targets(&options.scan)?;
-        let ignore_matchers =
-            build_ignore_matchers(&self.config.lint.ignore, LintRule::BrokenLinks);
-        let root = self.config.project.root.clone();
+        let schema_provider = NoopSchemaProvider;
 
-        let findings: Vec<LintFinding> = targets
-            .par_iter()
-            .flat_map(|path| {
-                if matches_ignored(&ignore_matchers, path) {
-                    return Vec::new().into_par_iter();
-                }
-
-                let absolute = root.join(path);
-                let source = match fs::read_to_string(&absolute) {
-                    Ok(contents) => contents,
-                    Err(err) => {
-                        return vec![LintFinding {
-                            path: path.clone(),
-                            line: 0,
-                            message: format!("failed to read file: {err}"),
-                            severity: SeverityLevel::Error,
-                        }]
-                        .into_par_iter();
-                    }
-                };
-
-                let mut file_findings = Vec::new();
-                for link in find_markdown_links(&source) {
-                    if is_external_link(&link.target) {
-                        continue;
-                    }
-
-                    let path_part = link.target.split('#').next().unwrap_or_default().trim();
-
-                    if path_part.is_empty() {
-                        continue;
-                    }
-
-                    if !is_markdown_path(path_part) {
-                        continue;
-                    }
-
-                    let resolved = resolve_relative_path(&absolute, path_part, &root);
-                    if !resolved.exists() {
-                        file_findings.push(LintFinding {
-                            path: path.clone(),
-                            line: link.line,
-                            message: format!("Broken link to '{}'", link.target),
-                            severity,
-                        });
-                    }
-                }
-
-                file_findings.into_par_iter()
-            })
-            .collect();
-
-        let mut sorted_findings = findings;
-        sorted_findings.sort_by(|a, b| match a.path.cmp(&b.path) {
-            std::cmp::Ordering::Equal => a.line.cmp(&b.line),
-            other => other,
-        });
-
-        let (errors, warnings) = sorted_findings.iter().fold((0, 0), |mut acc, finding| {
-            match finding.severity {
-                SeverityLevel::Error => acc.0 += 1,
-                SeverityLevel::Warning => acc.1 += 1,
-                SeverityLevel::Ignore => {}
-            }
-            acc
-        });
+        let result = lint::run(lint::LintRunInput {
+            config: &self.config,
+            parser: &self.parser,
+            targets: &targets,
+            root: &self.config.project.root,
+            schema_provider: &schema_provider,
+        })?;
 
         let report = LintRenderData {
-            files_scanned: targets.len(),
-            error_count: errors,
-            warning_count: warnings,
-            findings: sorted_findings.clone(),
+            files_scanned: result.files_scanned,
+            error_count: result.error_count,
+            warning_count: result.warning_count,
+            findings: result.findings.clone(),
         };
 
         let rendered = self.render_lint(&report, options.format)?;
-        let exit_code = if errors > 0 { 1 } else { 0 };
+        let exit_code = if result.error_count > 0 { 1 } else { 0 };
 
         Ok(LintOutcome {
             rendered,
             report,
             exit_code,
         })
+    }
+
+    /// Temporary wrapper retaining the legacy method name for compatibility.
+    pub fn lint_broken_links(&self, options: LintOptions) -> Result<LintOutcome, OperationError> {
+        self.lint(options)
     }
 
     fn render_lint(
@@ -402,69 +313,13 @@ fn normalize_relative_path(path: &Path) -> PathBuf {
     }
 }
 
-#[derive(Clone)]
-struct MarkdownLink {
-    target: String,
-    line: usize,
-}
+struct NoopSchemaProvider;
 
-fn find_markdown_links(contents: &str) -> Vec<MarkdownLink> {
-    static LINK_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"\[[^\]]+\]\(([^)]+)\)").unwrap());
-
-    contents
-        .lines()
-        .enumerate()
-        .flat_map(|(line_idx, line)| {
-            LINK_REGEX.captures_iter(line).filter_map(move |caps| {
-                caps.get(1).map(|mat| MarkdownLink {
-                    target: mat.as_str().trim().to_string(),
-                    line: line_idx + 1,
-                })
-            })
-        })
-        .collect()
-}
-
-fn is_external_link(target: &str) -> bool {
-    let lower = target.to_lowercase();
-    lower.starts_with("http://")
-        || lower.starts_with("https://")
-        || lower.starts_with("mailto:")
-        || lower.starts_with("tel:")
-        || lower.starts_with("data:")
-        || lower.starts_with('#')
-}
+impl lint::SchemaProvider for NoopSchemaProvider {}
 
 fn is_markdown_path(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
     lower.ends_with(".md") || lower.ends_with(".markdown")
-}
-
-fn resolve_relative_path(current_file: &Path, target: &str, root: &Path) -> PathBuf {
-    let base = current_file
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| root.to_path_buf());
-
-    let combined = if target.starts_with('/') {
-        root.join(target.trim_start_matches('/'))
-    } else {
-        base.join(target)
-    };
-
-    combined
-}
-
-fn build_ignore_matchers(ignores: &[LintIgnore], rule: LintRule) -> Vec<GlobMatcher> {
-    ignores
-        .iter()
-        .filter(|ignore| ignore.rules.contains(&rule))
-        .map(|ignore| ignore.path.glob().compile_matcher())
-        .collect()
-}
-
-fn matches_ignored(matchers: &[GlobMatcher], path: &Path) -> bool {
-    matchers.iter().any(|matcher| matcher.is_match(path))
 }
 
 /// Catalog execution options.

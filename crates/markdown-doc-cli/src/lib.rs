@@ -77,7 +77,7 @@ fn handle_lint(ops: &markdown_doc_ops::Operations, args: LintArgs) -> Result<i32
         rendered,
         exit_code,
         ..
-    } = ops.lint_broken_links(options)?;
+    } = ops.lint(options)?;
 
     emit(&rendered)?;
     Ok(exit_code)
@@ -107,7 +107,7 @@ struct Cli {
 enum Command {
     /// Generate the unified documentation catalog
     Catalog(CatalogArgs),
-    /// Run lint rules (broken-links in MVP)
+    /// Run lint rules
     Lint(LintArgs),
 }
 

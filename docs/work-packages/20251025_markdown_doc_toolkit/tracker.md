@@ -14,6 +14,8 @@
 ### Ready / Backlog
 - [ ] Evaluate CI workflow alignment with parent `/workdir/wepppy` pipelines before duplicating jobs (**PM/Agent 4**)
 - [ ] PM review + follow-up edits for README quickstart (Codex PM)
+- [ ] Build schema matcher and `markdown-doc validate` command (**Agent 6**)
+- [ ] Deliver `toc` command plus severity tuning (`lint.severity`, per-path ignores, `.markdown-doc-ignore`) (**Agent 7**)
 
 ### In Progress
 - [ ] Monitor benchmark baseline; rerun after significant parser/IO changes
@@ -28,12 +30,13 @@
 - [x] Ship catalog generation + broken-links lint CLI slice (**Agent 3**, 2025-10-25)
 - [x] Benchmark harness delivered + baseline captured (**Agent 4**, 2025-10-25)
 - [x] Acceptance testing + README quickstart documentation (Claude, 2025-10-25)
+- [x] Phase 2 lint rule suite (broken-anchors, duplicate-anchors, heading-hierarchy, toc-sync) landed (**Agent 5**, 2025-10-26)
 
 ## Timeline
 
 - **2025-10-25** – Package created, initial scaffolding complete
 - **2025-10-25** – Phase 1 MVP (`catalog`, `lint broken-links`) delivered
-- **TBD** – Phase 2 quality gates released
+- **2025-10-26** – Phase 2 quality gates (lint rule expansions) released
 - **TBD** – Phase 3 refactoring support shipped
 - **TBD** – Phase 4 intelligence features delivered and package closed
 
@@ -222,6 +225,22 @@ markdown-doc catalog --format json --path README.md
 markdown-doc lint --path docs/ --format plain
 ```
 
+### 2025-10-25: Phase 2 planning & prompt prep
+**Agent/Contributor**: Codex PM Agent
+
+**Work completed**:
+- Marked Phase 1 items complete in plan/tracker and captured benchmark + documentation baselines.
+- Authored Phase 2 prompts for lint rule expansion (Agent 5), schema matcher/validate (Agent 6), and TOC & severity tuning (Agent 7).
+- Updated task board backlog to reflect upcoming assignments and remaining PM doc review.
+
+**Blockers encountered**:
+- None – awaiting new workers for Phase 2 execution.
+
+**Next steps**:
+1. Brief incoming agents with the prepared prompts and coordinate sequencing.
+2. Complete PM review pass on README updates (assigned in backlog).
+3. Align with `/workdir/wepppy` maintainers before adjusting CI workflows in this repo.
+
 ### 2025-10-25: CI + Benchmark Harness
 **Agent/Contributor**: Agent 4 (Codex)
 
@@ -245,6 +264,29 @@ cargo fmt
 cargo clippy --all-targets --all-features
 cargo test --all
 cargo run -p markdown-doc-bench -- --iterations 1 --warmup 0
+```
+
+### 2025-10-26: Phase 2 lint rule implementation
+**Agent/Contributor**: Agent 5 (Codex)
+
+**Work completed**:
+- Refactored lint engine to a pluggable rule pipeline, adding support for `broken-anchors`, `duplicate-anchors`, `heading-hierarchy`, and `toc-sync` alongside the existing `broken-links` rule.
+- Extended configuration (`lint.toc_start_marker`/`lint.toc_end_marker`) and renderer output so findings carry rule identifiers across plain/JSON/SARIF formats.
+- Added unit/integration coverage for the new rules and updated README + architecture docs to describe behaviour and configuration knobs.
+
+**Blockers encountered**:
+- None (required-sections rule currently stubs pending schema matcher delivery).
+
+**Next steps**:
+1. Integrate Agent 6 schema matcher so `required-sections` surfaces actionable findings.
+2. Expand fixtures covering cross-file anchors and large TOC documents for performance benchmarking.
+3. Monitor lint runtime on WEPPpy corpus after schema integration lands.
+
+**Test results**:
+```bash
+cargo fmt
+cargo clippy --all-targets --all-features
+cargo test --all
 ```
 
 ## Watch List

@@ -4,8 +4,9 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use chrono::{DateTime, Local, Utc};
-use markdown_doc_config::Config;
-use markdown_doc_config::SeverityLevel;
+use std::collections::HashSet;
+
+use markdown_doc_config::{Config, LintRule, SeverityLevel};
 use serde::Serialize;
 
 /// Supported catalog output formats.
@@ -48,6 +49,7 @@ pub struct CatalogRenderData {
 /// Individual lint finding ready for rendering.
 #[derive(Clone, Debug)]
 pub struct LintFinding {
+    pub rule: LintRule,
     pub path: PathBuf,
     pub line: usize,
     pub message: String,
@@ -183,10 +185,11 @@ impl Renderer {
             };
 
             output.push_str(&format!(
-                "{} {}:{}: {}\n",
+                "{} {}:{} [{}] {}\n",
                 marker,
                 normalize_path_display(&finding.path),
                 finding.line,
+                finding.rule.as_str(),
                 finding.message
             ));
         }
@@ -238,7 +241,7 @@ impl Renderer {
             .findings
             .iter()
             .map(|finding| JsonFinding {
-                rule: "broken-links",
+                rule: finding.rule.as_str(),
                 severity: severity_label(finding.severity),
                 file: normalize_path_display(&finding.path).into_owned(),
                 line: finding.line,
@@ -328,28 +331,46 @@ impl Renderer {
             runs: Vec<Run<'a>>,
         }
 
+        let mut rule_set: HashSet<LintRule> = HashSet::new();
+
         let results = report
             .findings
             .iter()
-            .map(|finding| ResultEntry {
-                rule_id: "broken-links",
-                level: sarif_level(finding.severity),
-                message: Message {
-                    text: finding.message.as_str(),
-                },
-                locations: vec![Location {
-                    physical_location: PhysicalLocation {
-                        artifact_location: ArtifactLocation {
-                            uri: normalize_path_display(&finding.path).into_owned(),
-                            uri_base_id: Some("PROJECT_ROOT"),
-                        },
-                        region: Region {
-                            start_line: finding.line,
-                        },
+            .map(|finding| {
+                rule_set.insert(finding.rule);
+                ResultEntry {
+                    rule_id: finding.rule.as_str(),
+                    level: sarif_level(finding.severity),
+                    message: Message {
+                        text: finding.message.as_str(),
                     },
-                }],
+                    locations: vec![Location {
+                        physical_location: PhysicalLocation {
+                            artifact_location: ArtifactLocation {
+                                uri: normalize_path_display(&finding.path).into_owned(),
+                                uri_base_id: Some("PROJECT_ROOT"),
+                            },
+                            region: Region {
+                                start_line: finding.line,
+                            },
+                        },
+                    }],
+                }
             })
             .collect();
+
+        let mut rules: Vec<Rule<'_>> = rule_set
+            .into_iter()
+            .map(|rule| Rule {
+                id: rule.as_str(),
+                name: rule_display_name(rule),
+                full_description: Message {
+                    text: rule_description(rule),
+                },
+            })
+            .collect();
+
+        rules.sort_by_key(|rule| rule.id);
 
         let sarif = Sarif {
             version: "2.1.0",
@@ -358,13 +379,7 @@ impl Renderer {
                 tool: Tool {
                     driver: Driver {
                         name: "markdown-doc",
-                        rules: vec![Rule {
-                            id: "broken-links",
-                            name: "Broken Links",
-                            full_description: Message {
-                                text: "Internal markdown links must reference existing files.",
-                            },
-                        }],
+                        rules,
                     },
                 },
                 results,
@@ -396,5 +411,31 @@ fn sarif_level(severity: SeverityLevel) -> &'static str {
         SeverityLevel::Error => "error",
         SeverityLevel::Warning => "warning",
         SeverityLevel::Ignore => "note",
+    }
+}
+
+fn rule_display_name(rule: LintRule) -> &'static str {
+    match rule {
+        LintRule::BrokenLinks => "Broken Links",
+        LintRule::BrokenAnchors => "Broken Anchors",
+        LintRule::DuplicateAnchors => "Duplicate Anchors",
+        LintRule::HeadingHierarchy => "Heading Hierarchy",
+        LintRule::RequiredSections => "Required Sections",
+        LintRule::TocSync => "TOC Sync",
+    }
+}
+
+fn rule_description(rule: LintRule) -> &'static str {
+    match rule {
+        LintRule::BrokenLinks => "Internal markdown links must reference existing files.",
+        LintRule::BrokenAnchors => "Inline anchors must resolve to existing headings.",
+        LintRule::DuplicateAnchors => "Heading anchor slugs must be unique within a document.",
+        LintRule::HeadingHierarchy => {
+            "Heading levels must not skip levels or exceed configured depth."
+        }
+        LintRule::RequiredSections => "Documents must include schema-defined required sections.",
+        LintRule::TocSync => {
+            "Declared tables of contents must reflect the current heading structure."
+        }
     }
 }

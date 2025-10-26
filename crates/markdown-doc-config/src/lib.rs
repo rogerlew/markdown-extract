@@ -51,6 +51,7 @@ pub struct LintSettings {
     pub severity: HashMap<LintRule, SeverityLevel>,
     pub max_heading_depth: u8,
     pub ignore: Vec<LintIgnore>,
+    pub toc: TocSettings,
 }
 
 impl LintSettings {
@@ -61,6 +62,13 @@ impl LintSettings {
             .copied()
             .unwrap_or(SeverityLevel::Error)
     }
+}
+
+/// Configuration governing TOC marker detection.
+#[derive(Clone, Debug)]
+pub struct TocSettings {
+    pub start_marker: String,
+    pub end_marker: String,
 }
 
 /// Pattern plus compiled matcher helper.
@@ -121,6 +129,7 @@ pub enum LintRule {
     DuplicateAnchors,
     HeadingHierarchy,
     RequiredSections,
+    TocSync,
 }
 
 impl LintRule {
@@ -130,6 +139,7 @@ impl LintRule {
         LintRule::DuplicateAnchors,
         LintRule::HeadingHierarchy,
         LintRule::RequiredSections,
+        LintRule::TocSync,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -139,6 +149,7 @@ impl LintRule {
             LintRule::DuplicateAnchors => "duplicate-anchors",
             LintRule::HeadingHierarchy => "heading-hierarchy",
             LintRule::RequiredSections => "required-sections",
+            LintRule::TocSync => "toc-sync",
         }
     }
 }
@@ -159,6 +170,7 @@ impl std::str::FromStr for LintRule {
             "duplicate-anchors" => Ok(LintRule::DuplicateAnchors),
             "heading-hierarchy" => Ok(LintRule::HeadingHierarchy),
             "required-sections" => Ok(LintRule::RequiredSections),
+            "toc-sync" => Ok(LintRule::TocSync),
             _ => Err(()),
         }
     }
@@ -437,6 +449,8 @@ fn defaults_layer(source: ConfigSource) -> PartialConfig {
     let lint = LintPartial {
         rules: Some(Located::new(vec!["broken-links".into()], source.clone())),
         max_heading_depth: Some(Located::new(4, source.clone())),
+        toc_start_marker: Some(Located::new("<!-- toc -->".into(), source.clone())),
+        toc_end_marker: Some(Located::new("<!-- tocstop -->".into(), source.clone())),
         ..LintPartial::default()
     };
 
@@ -563,12 +577,45 @@ impl PartialConfig {
             ));
         }
 
+        let toc_start_marker = lint_partial.toc_start_marker.unwrap_or_else(|| {
+            Located::new(
+                "<!-- toc -->".to_string(),
+                ConfigSource::default(PathBuf::from(".")),
+            )
+        });
+
+        if toc_start_marker.value.trim().is_empty() {
+            errors.push(ConfigValidationError::new(
+                Some(toc_start_marker.source.clone()),
+                "lint.toc_start_marker cannot be empty".into(),
+            ));
+        }
+
+        let toc_end_marker = lint_partial.toc_end_marker.unwrap_or_else(|| {
+            Located::new(
+                "<!-- tocstop -->".to_string(),
+                ConfigSource::default(PathBuf::from(".")),
+            )
+        });
+
+        if toc_end_marker.value.trim().is_empty() {
+            errors.push(ConfigValidationError::new(
+                Some(toc_end_marker.source.clone()),
+                "lint.toc_end_marker cannot be empty".into(),
+            ));
+        }
+
         let severity = parse_severity_map(lint_partial.severity, &mut errors);
         let ignore = parse_ignore_list(lint_partial.ignore, &mut errors);
 
         if !errors.is_empty() {
             return Err(ConfigValidationErrors(errors));
         }
+
+        let toc_settings = TocSettings {
+            start_marker: toc_start_marker.value,
+            end_marker: toc_end_marker.value,
+        };
 
         Ok(ResolvedConfig {
             project: ProjectSettings {
@@ -586,6 +633,7 @@ impl PartialConfig {
                 severity,
                 max_heading_depth: max_heading_depth.value,
                 ignore,
+                toc: toc_settings,
             },
         })
     }
@@ -639,6 +687,8 @@ struct LintPartial {
     max_heading_depth: Option<Located<u8>>,
     severity: HashMap<String, Located<String>>,
     ignore: Vec<Located<LintIgnorePartial>>,
+    toc_start_marker: Option<Located<String>>,
+    toc_end_marker: Option<Located<String>>,
 }
 
 impl LintPartial {
@@ -648,6 +698,12 @@ impl LintPartial {
         }
         if other.max_heading_depth.is_some() {
             self.max_heading_depth = other.max_heading_depth;
+        }
+        if other.toc_start_marker.is_some() {
+            self.toc_start_marker = other.toc_start_marker;
+        }
+        if other.toc_end_marker.is_some() {
+            self.toc_end_marker = other.toc_end_marker;
         }
         for (key, value) in other.severity {
             self.severity.insert(key, value);
@@ -969,6 +1025,10 @@ struct RawLint {
     #[serde(default)]
     max_heading_depth: Option<u8>,
     #[serde(default)]
+    toc_start_marker: Option<String>,
+    #[serde(default)]
+    toc_end_marker: Option<String>,
+    #[serde(default)]
     severity: HashMap<String, String>,
     #[serde(default)]
     ignore: Vec<RawLintIgnore>,
@@ -1000,6 +1060,12 @@ impl RawLint {
             rules: self.rules.map(|value| Located::new(value, source.clone())),
             max_heading_depth: self
                 .max_heading_depth
+                .map(|value| Located::new(value, source.clone())),
+            toc_start_marker: self
+                .toc_start_marker
+                .map(|value| Located::new(value, source.clone())),
+            toc_end_marker: self
+                .toc_end_marker
                 .map(|value| Located::new(value, source.clone())),
             severity,
             ignore,

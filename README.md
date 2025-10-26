@@ -511,8 +511,10 @@ include_patterns = ["**/*.md"]
 exclude_patterns = ["**/node_modules/**", "**/vendor/**", "**/target/**"]
 
 [lint]
-rules = ["broken-links"]
+rules = ["broken-links", "toc-sync"]
 max_heading_depth = 4
+toc_start_marker = "<!-- toc -->"
+toc_end_marker = "<!-- tocstop -->"
 
 # Override severity for specific rules
 [lint.severity]
@@ -540,6 +542,8 @@ rules = ["heading-hierarchy"]
 | `catalog` | `exclude_patterns` | glob[] | Common build dirs | Files to exclude |
 | `lint` | `rules` | string[] | `["broken-links"]` | Active lint rules |
 | `lint` | `max_heading_depth` | int (1-6) | `4` | Maximum heading level |
+| `lint` | `toc_start_marker` | string | `"<!-- toc -->"` | Opening marker delimiting TOC blocks |
+| `lint` | `toc_end_marker` | string | `"<!-- tocstop -->"` | Closing marker delimiting TOC blocks |
 | `lint.severity` | `<rule>` | `error`/`warning`/`ignore` | `error` | Override rule severity |
 | `lint.ignore` | `path` | glob | (required) | Pattern to ignore |
 | `lint.ignore` | `rules` | string[] | (required) | Rules to disable for pattern |
@@ -548,11 +552,12 @@ rules = ["heading-hierarchy"]
 
 | Rule | Description | Status |
 |------|-------------|--------|
-| `broken-links` | Detects internal markdown links to non-existent files | ✅ MVP |
-| `broken-anchors` | Verifies heading anchors in links exist | 🚧 Planned |
-| `duplicate-anchors` | Flags duplicate heading IDs in same file | 🚧 Planned |
-| `heading-hierarchy` | Ensures heading levels don't skip (e.g., H1→H3) | 🚧 Planned |
-| `required-sections` | Enforces presence of specific headings | 🚧 Planned |
+| `broken-links` | Detects internal markdown links to non-existent files | ✅ Available |
+| `broken-anchors` | Verifies heading anchors in links exist (intra- and inter-file) | ✅ Available |
+| `duplicate-anchors` | Flags duplicate heading IDs in same file | ✅ Available |
+| `heading-hierarchy` | Ensures heading levels don't skip (e.g., H1→H3) and respects max depth | ✅ Available |
+| `required-sections` | Enforces presence of schema-defined sections *(requires schema matcher, pending)* | ⚠️ Stub |
+| `toc-sync` | Validates declared TOC blocks match heading structure | ✅ Available |
 
 ### Integration Examples
 

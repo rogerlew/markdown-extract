@@ -52,6 +52,8 @@ fn loads_defaults_when_no_files_present() {
     assert_eq!(config.lint.max_heading_depth, 4);
     assert!(config.lint.severity.is_empty());
     assert!(config.lint.ignore.is_empty());
+    assert_eq!(config.lint.toc.start_marker, "<!-- toc -->");
+    assert_eq!(config.lint.toc.end_marker, "<!-- tocstop -->");
 
     assert_eq!(config.sources.layers.len(), 1);
     assert_eq!(config.sources.layers[0].kind, ConfigSourceKind::Default);
@@ -100,6 +102,8 @@ fn applies_precedence_and_merges_fields() {
 
         [lint]
         rules = ["broken-links", "duplicate-anchors"]
+        toc_start_marker = "<!-- table-of-contents -->"
+        toc_end_marker = "<!-- /table-of-contents -->"
 
         [lint.severity]
         duplicate-anchors = "ignore"
@@ -144,6 +148,8 @@ fn applies_precedence_and_merges_fields() {
         vec![LintRule::BrokenLinks, LintRule::DuplicateAnchors]
     );
     assert_eq!(config.lint.max_heading_depth, 6);
+    assert_eq!(config.lint.toc.start_marker, "<!-- table-of-contents -->");
+    assert_eq!(config.lint.toc.end_marker, "<!-- /table-of-contents -->");
 
     assert_eq!(
         config.lint.severity.get(&LintRule::BrokenLinks),
