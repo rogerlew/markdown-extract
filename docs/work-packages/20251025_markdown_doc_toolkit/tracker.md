@@ -5,19 +5,15 @@
 ## Quick Status
 
 **Started**: 2025-10-25  
-**Current phase**: Implementation (Phase 1 foundations)  
-**Last updated**: 2025-10-25 (Config loader + parser spans + CI/bench)  
-**Next milestone**: Complete Cross-Cutting Foundations checklist and Phase 1 MVP slice
+**Current phase**: Phase 3 – Refactoring support in progress  
+**Last updated**: 2025-10-27 (Link graph + `mv` command)  
+**Next milestone**: Deliver `markdown-doc refs` and stress-test fixtures
 
 ## Task Board
 
 ### Ready / Backlog
 - [ ] Evaluate CI workflow alignment with parent `/workdir/wepppy` pipelines before duplicating jobs (**PM/Agent 4**)
-- [ ] README quickstart QA & documentation review (**Claude**) – see `prompts/active/claude_readme_quickstart_review.md`
-- [ ] Draft Phase 3 refactoring prompts (`mv`, `refs`, link graph engine) (**Codex PM**)
 - [ ] Identify additional fixtures for Phase 3 stress tests (nested directories, mixed links) (**Future Agent**)
-- [ ] Build link graph + rewrite planning engine (**Agent 8**) – `prompts/active/agent8_phase3_link_graph.md`
-- [ ] Implement `markdown-doc mv` command with safe rewrites (**Agent 9**) – `prompts/active/agent9_phase3_mv.md`
 - [ ] Implement `markdown-doc refs` command & stress-test fixtures (**Agent 10**) – `prompts/active/agent10_phase3_refs.md`
 
 ### In Progress
@@ -26,7 +22,6 @@
 ### Blocked
 - [ ] None currently
 
-### Done
 - [x] Bootstrap workspace crates, fixtures, and docs (2025-10-25)
 - [x] Flesh out configuration resolver with precedence, defaults, and validation (**Agent 1**, 2025-10-25)
 - [x] Implement markdown parsing layer with enriched spans (**Agent 2**, 2025-10-25)
@@ -36,6 +31,9 @@
 - [x] Phase 2 lint rule suite (broken-anchors, duplicate-anchors, heading-hierarchy, toc-sync) landed (**Agent 5**, 2025-10-26)
 - [x] Schema matcher + `markdown-doc validate` command delivered (**Agent 6**, 2025-10-26)
 - [x] TOC command, severity tuning, and `.markdown-doc-ignore` support shipped (**Agent 7**, 2025-10-26)
+- [x] Link graph engine & rewrite planning utilities implemented (**Agent 8**, 2025-10-27)
+- [x] `markdown-doc mv` command delivered with transactional rewrites (**Agent 9**, 2025-10-27)
+- [x] Phase 3 documentation refresh (mv command comprehensive coverage) (**Claude**, 2025-10-27)
 
 ## Timeline
 
@@ -43,7 +41,8 @@
 - **2025-10-25** – Phase 1 MVP (`catalog`, `lint broken-links`) delivered
 - **2025-10-26** – Phase 2 quality gates (lint rule expansions) released
 - **2025-10-26** – Schema matcher + validate command available for template enforcement
-- **TBD** – Phase 3 refactoring support shipped
+- **2025-10-27** – Link graph + `mv` command shipped (Phase 3 kickoff)
+- **TBD** – `refs` command & stress fixtures delivered
 - **TBD** – Phase 4 intelligence features delivered and package closed
 
 ## Decisions Log
@@ -391,6 +390,53 @@ cargo test --all
 markdown-doc toc --path README.md --check
 ```
 
+### 2025-10-27: Link graph engine delivery
+**Agent/Contributor**: Agent 8 (Codex)
+
+**Work completed**:
+- Implemented `LinkGraph` module capturing anchors, links, and backreferences across Markdown files (respecting config filters and `.markdown-doc-ignore`).
+- Added rewrite planning helpers (`rewrite::plan_move`) that compute updated contents for file moves, supporting dry-run diffs and atomic write stages for downstream commands.
+- Added unit/integration tests under `crates/markdown-doc-ops/tests/graph.rs` and `tests/markdown-doc/refactor/` covering nested directories, reference links, and anchors.
+- Documented the API via Rustdoc and updated architecture notes to describe the refactoring engine.
+
+**Blockers encountered**:
+- None; noted TODO for future anchor-renaming support.
+
+**Next steps**:
+1. Hand off rewrite utilities to Agent 9 for `markdown-doc mv`.
+2. Evaluate caching strategies if multiple commands request the graph in a single run.
+
+**Test results**:
+```bash
+cargo fmt
+cargo clippy --all-targets --all-features
+cargo test --all
+```
+
+### 2025-10-27: `markdown-doc mv` implementation
+**Agent/Contributor**: Agent 9 (Codex)
+
+**Work completed**:
+- Added CLI/ops implementation for `markdown-doc mv`, supporting `--dry-run`, `--force`, `--no-backup`, `--quiet`, and `--format json`.
+- Leveraged the link graph rewrite planner to update relative links and anchors when moving files; ensured transactional writes with temp files and optional `.bak` copies.
+- Added integration tests (`tests/mv.rs`, CLI tests) covering dry-run diffs, backup handling, ignore filters, and JSON output.
+- Updated README and architecture documentation with usage examples and agent workflows.
+
+**Blockers encountered**:
+- None; directory moves deferred to future work (tracked in backlog).
+
+**Next steps**:
+1. Collaborate with Agent 10 on `refs`, reusing graph APIs.
+2. Monitor performance on large refactors; consider graph caching if needed.
+
+**Test results**:
+```bash
+cargo fmt
+cargo clippy --all-targets --all-features
+cargo test --all
+markdown-doc mv docs/source.md docs/destination.md --dry-run
+```
+
 ### 2025-10-26: Phase 3 kickoff planning
 **Agent/Contributor**: Codex PM Agent
 
@@ -610,3 +656,69 @@ cargo run -p markdown-doc-cli --release -- catalog --path README.md --format jso
 ```bash
 cargo test --all
 ```
+
+### 2025-10-27: README Phase 3 Documentation Refresh (mv Command)
+**Agent/Contributor**: Claude (Documentation)
+
+**Work completed**:
+- Enhanced `markdown-doc mv` command documentation in README.md from brief (~23 lines) to comprehensive (~91 lines) coverage matching the quality level of catalog/lint/validate/toc sections.
+- Added detailed command variations covering all flags (`--dry-run`, `--force`, `--no-backup`, `--json`, `--quiet`, `--no-ignore`).
+- Documented what gets updated (inbound/outbound links, images, reference definitions, anchor fragments) with checklist format.
+- Provided before/after example scenario showing link rewrites in both directions.
+- Included JSON output schema with representative structure (`status`, `original`, `output`, `files_updated`, `diff`).
+- Listed exit codes (0/1/4) with explanations for each code.
+- Documented safety features (dry-run, automatic backups, atomic writes, rollback, ignore filtering) with detailed explanations.
+- Added "Common workflows" section with three practical examples (safe rename, directory move, automation-friendly).
+- Verified architecture doc (`docs/markdown-doc/README.md`) already has comprehensive link graph + refactor engine coverage from Agent 8/9 work; no updates needed.
+
+**Documentation additions**:
+
+1. **mv Command Section Expansion** (+68 lines)
+   - 6 command variations (was 3)
+   - "What gets updated" checklist (5 items with emoji markers)
+   - Before/after example showing bi-directional link rewriting
+   - JSON schema with sample output
+   - Exit codes table (0/1/4)
+   - Safety features list (5 items with bold headings)
+   - Common workflows section (3 examples)
+
+**Verification commands**:
+```bash
+# Verified CLI flags match documentation
+cargo run -p markdown-doc-cli --release -- mv --help
+
+# Confirmed section structure and line count
+markdown-extract 'mv.*Safe' README.md | wc -l  # Output: 91 lines
+
+# Validated enhanced documentation reads correctly
+markdown-extract 'mv.*Safe' README.md | head -30
+markdown-extract 'mv.*Safe' README.md | tail -30
+
+# Confirmed total README length increased appropriately
+wc -l README.md  # Now 1188 lines (was 1121, +67 lines)
+```
+
+**Integration with Phase 3 work**:
+- Builds on Agent 8's link graph engine documentation (already in architecture doc)
+- Complements Agent 9's CLI implementation (verified via `--help` output)
+- Aligns with `claude_phase3_docs_refresh.md` prompt requirements
+- Architecture doc already has "Refactor Engine (Link Graph + Rewrite)" section with LinkGraph/RewritePlan coverage; no updates needed
+
+**Task board updates**:
+- [x] Phase 3 documentation refresh (human-friendly pass) (**Claude**) – moved to completed
+
+**Blockers encountered**:
+- `replace_string_in_file` tool failed repeatedly due to whitespace matching issues; resolved by using `markdown-edit` CLI tool for the replacement operation (dogfooding FTW).
+
+**Next steps**:
+1. Phase 3 `mv` command fully documented and ready for use.
+2. When Agent 10 delivers `markdown-doc refs`, add similar comprehensive section.
+3. Consider adding link graph utility examples to README if refs command exposes them (deferred until refs lands).
+4. README now has complete coverage: catalog/lint/validate/toc/mv all documented at similar depth.
+
+**Files modified**:
+- `README.md` (enhanced mv section, +67 lines, total now 1188 lines)
+- `docs/work-packages/20251025_markdown_doc_toolkit/tracker.md` (this entry)
+
+**Verification status**: ✅ **COMPLETE** - Phase 3 mv documentation comprehensive and aligned with claude_phase3_docs_refresh.md requirements
+

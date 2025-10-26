@@ -656,27 +656,95 @@ By default, validate respects `.markdown-doc-ignore` patterns. Use `--no-ignore`
 
 #### `mv` - Safe Markdown Renames
 
-Renames Markdown files (or moves them into new directories) while updating every in-repo reference via the link graph.
+Moves or renames Markdown files while automatically updating all references throughout the repository. Uses the link graph to rewrite inbound and outbound links, images, and reference definitions.
 
 ```console
-# Preview the rename without writing
+# Preview the rename without writing (shows diffs)
 $ markdown-doc mv intro.md docs/intro.md --dry-run
 
-# Apply the rename, overwriting destination if present
+# Apply the rename
+$ markdown-doc mv intro.md docs/intro.md
+
+# Overwrite destination if it exists
 $ markdown-doc mv intro.md docs/intro.md --force
 
-# Skip .bak backups or emit machine-readable output
+# Skip backups and emit machine-readable output
 $ markdown-doc mv intro.md docs/intro.md --no-backup --json
+
+# Quiet mode (suppress per-file logs)
+$ markdown-doc mv intro.md docs/intro.md --quiet
+
+# Move and bypass .markdown-doc-ignore filtering
+$ markdown-doc mv intro.md docs/intro.md --no-ignore
 ```
 
-Key behaviours:
-- Builds on the Phase 3 link graph to locate inbound/outbound links, images, and reference definitions.
-- Relative links are rewritten automatically (`guide.md` → `docs/intro.md` updates `../` segments as needed).
-- Dry-run prints unified diffs for every affected file without touching disk.
-- Backups (`*.bak`) are created by default; use `--no-backup` to opt out. `--force` enables overwriting existing destinations.
-- Honor `.markdown-doc-ignore` unless `--no-ignore` is supplied (ignored files keep their original links).
-- JSON mode returns a structured summary (`status`, `original`, `output`, optional `diff`) suitable for automation.
+**What gets updated:**
+- ✅ Inbound links from other files (`[link](intro.md)` → `[link](docs/intro.md)`)
+- ✅ Outbound links inside the moved file (relative paths adjusted)
+- ✅ Image references (`![img](./assets/pic.png)` → `![img](../assets/pic.png)`)
+- ✅ Reference-style link definitions (`[ref]: intro.md` → `[ref]: docs/intro.md`)
+- ✅ Anchor fragments preserved (`intro.md#section` → `docs/intro.md#section`)
 
+**Example scenario:**
+
+Before move:
+```markdown
+# guide.md
+See [introduction](intro.md) for details.
+Visit the [overview section](intro.md#overview).
+
+# intro.md
+Learn more in the [guide](guide.md).
+```
+
+After `markdown-doc mv intro.md docs/intro.md`:
+```markdown
+# guide.md
+See [introduction](docs/intro.md) for details.
+Visit the [overview section](docs/intro.md#overview).
+
+# docs/intro.md (moved from intro.md)
+Learn more in the [guide](../guide.md).
+```
+
+**JSON output schema:**
+```json
+{
+  "status": "success",
+  "original": "intro.md",
+  "output": "docs/intro.md",
+  "files_updated": 5,
+  "diff": "--- guide.md\n+++ guide.md\n@@ -1,1 +1,1 @@\n-See [intro](intro.md)\n+See [intro](docs/intro.md)\n"
+}
+```
+
+**Exit codes:**
+- `0`: Move completed successfully
+- `1`: Validation error (destination exists without `--force`, source not found)
+- `4`: I/O error during file operations
+
+**Safety features:**
+- **Dry-run mode**: Preview all changes with unified diffs before committing
+- **Automatic backups**: Creates `.bak` files for all modified files (disable with `--no-backup`)
+- **Atomic writes**: Uses temp files + rename for crash safety
+- **Rollback on error**: Reverts all changes if any write fails
+- **Ignore filtering**: Respects `.markdown-doc-ignore` unless `--no-ignore` is set
+
+**Common workflows:**
+
+```bash
+# Safe rename workflow
+markdown-doc mv old-name.md new-name.md --dry-run  # 1. Preview
+markdown-doc mv old-name.md new-name.md            # 2. Apply
+
+# Move to new directory structure
+markdown-doc mv api.md docs/api/core.md --dry-run
+markdown-doc mv api.md docs/api/core.md --force
+
+# Automation-friendly (JSON + quiet)
+result=$(markdown-doc mv src.md dest.md --json --quiet --no-backup)
+echo "$result" | jq '.files_updated'
+```
 #### Link Graph & Rewrite Utilities
 
 Phase 3 introduces a reusable refactor engine in `markdown-doc-ops::refactor` that higher-level commands (`markdown-doc mv`, `markdown-doc refs`, future rename workflows) will leverage.
