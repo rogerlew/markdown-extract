@@ -13,7 +13,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use globset::Glob;
+use globset::{Glob, GlobMatcher};
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -25,6 +25,7 @@ pub struct Config {
     pub project: ProjectSettings,
     pub catalog: CatalogSettings,
     pub lint: LintSettings,
+    pub schemas: SchemaSettings,
     pub sources: ConfigSources,
 }
 
@@ -49,6 +50,8 @@ pub struct CatalogSettings {
 pub struct LintSettings {
     pub rules: Vec<LintRule>,
     pub severity: HashMap<LintRule, SeverityLevel>,
+    pub severity_wildcard: Option<SeverityLevel>,
+    pub severity_overrides: Vec<LintSeverityOverride>,
     pub max_heading_depth: u8,
     pub ignore: Vec<LintIgnore>,
     pub toc: TocSettings,
@@ -60,8 +63,55 @@ impl LintSettings {
         self.severity
             .get(&rule)
             .copied()
+            .or(self.severity_wildcard)
             .unwrap_or(SeverityLevel::Error)
     }
+
+    /// Returns the effective severity for `rule` when evaluating `path`.
+    pub fn severity_for_path(&self, path: &Path, rule: LintRule) -> SeverityLevel {
+        for override_entry in self.severity_overrides.iter().rev() {
+            if override_entry.matcher.is_match(path) {
+                if let Some(level) = override_entry.rules.get(&rule).copied() {
+                    return level;
+                }
+                if let Some(level) = override_entry.wildcard {
+                    return level;
+                }
+            }
+        }
+        self.severity_for(rule)
+    }
+
+    /// Determine whether the rule is enabled in any scope.
+    pub fn is_rule_enabled(&self, rule: LintRule) -> bool {
+        if self.severity_for(rule) != SeverityLevel::Ignore {
+            return true;
+        }
+
+        for override_entry in &self.severity_overrides {
+            if let Some(level) = override_entry.rules.get(&rule) {
+                if *level != SeverityLevel::Ignore {
+                    return true;
+                }
+            } else if let Some(level) = override_entry.wildcard {
+                if level != SeverityLevel::Ignore {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+}
+
+/// Path-scoped severity override rules.
+#[derive(Clone, Debug)]
+pub struct LintSeverityOverride {
+    pub path: Pattern,
+    pub matcher: GlobMatcher,
+    pub rules: HashMap<LintRule, SeverityLevel>,
+    pub wildcard: Option<SeverityLevel>,
+    pub source: ConfigSource,
 }
 
 /// Configuration governing TOC marker detection.
@@ -69,6 +119,43 @@ impl LintSettings {
 pub struct TocSettings {
     pub start_marker: String,
     pub end_marker: String,
+}
+
+/// Resolved schema configuration providing template definitions and pattern precedence.
+#[derive(Clone, Debug)]
+pub struct SchemaSettings {
+    pub default_schema: String,
+    pub schemas: HashMap<String, SchemaDefinition>,
+    pub patterns: Vec<SchemaPattern>,
+}
+
+/// Individual schema template definition.
+#[derive(Clone, Debug)]
+pub struct SchemaDefinition {
+    pub name: String,
+    pub source: ConfigSource,
+    pub patterns: Vec<Pattern>,
+    pub required_sections: Vec<String>,
+    pub allow_additional: bool,
+    pub allow_empty: bool,
+    pub min_sections: Option<u32>,
+    pub min_heading_level: Option<u8>,
+    pub max_heading_level: Option<u8>,
+    pub require_top_level_heading: Option<bool>,
+}
+
+/// Pattern-to-schema association with pre-computed specificity ordering.
+#[derive(Clone, Debug)]
+pub struct SchemaPattern {
+    pub schema: String,
+    pub matcher: Pattern,
+    specificity: PatternSpecificity,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+struct PatternSpecificity {
+    segments: usize,
+    literal_chars: usize,
 }
 
 /// Pattern plus compiled matcher helper.
@@ -212,8 +299,16 @@ impl std::str::FromStr for SeverityLevel {
 #[derive(Clone, Debug)]
 pub struct LintIgnore {
     pub path: Pattern,
-    pub rules: Vec<LintRule>,
+    pub matcher: GlobMatcher,
+    pub rules: LintIgnoreRules,
     pub source: ConfigSource,
+}
+
+/// Target set for lint ignore entries.
+#[derive(Clone, Debug)]
+pub enum LintIgnoreRules {
+    All,
+    Specific(Vec<LintRule>),
 }
 
 /// Provenance information for resolved configuration.
@@ -371,6 +466,7 @@ impl Config {
             project: config.project,
             catalog: config.catalog,
             lint: config.lint,
+            schemas: config.schemas,
             sources: ConfigSources {
                 working_directory: working_dir,
                 layers: source_layers,
@@ -454,10 +550,25 @@ fn defaults_layer(source: ConfigSource) -> PartialConfig {
         ..LintPartial::default()
     };
 
+    let default_schema = SchemaDefinitionPartial {
+        source: Some(source.clone()),
+        required_sections: Some(Located::new(Vec::new(), source.clone())),
+        allow_additional: Some(Located::new(true, source.clone())),
+        allow_empty: Some(Located::new(false, source.clone())),
+        min_heading_level: Some(Located::new(1, source.clone())),
+        max_heading_level: Some(Located::new(4, source.clone())),
+        require_top_level_heading: Some(Located::new(true, source.clone())),
+        ..SchemaDefinitionPartial::default()
+    };
+
+    let mut schemas = SchemasPartial::default();
+    schemas.entries.insert("default".into(), default_schema);
+
     PartialConfig {
         project: Some(project),
         catalog: Some(catalog),
         lint: Some(lint),
+        schemas: Some(schemas),
     }
 }
 
@@ -482,6 +593,7 @@ struct PartialConfig {
     project: Option<ProjectPartial>,
     catalog: Option<CatalogPartial>,
     lint: Option<LintPartial>,
+    schemas: Option<SchemasPartial>,
 }
 
 impl PartialConfig {
@@ -490,6 +602,7 @@ impl PartialConfig {
             project: None,
             catalog: None,
             lint: None,
+            schemas: None,
         }
     }
 
@@ -512,6 +625,13 @@ impl PartialConfig {
             match &mut self.lint {
                 Some(lint) => lint.merge(other_lint),
                 None => self.lint = Some(other_lint),
+            }
+        }
+
+        if let Some(other_schemas) = other.schemas.take() {
+            match &mut self.schemas {
+                Some(schemas) => schemas.merge(other_schemas),
+                None => self.schemas = Some(other_schemas),
             }
         }
     }
@@ -605,8 +725,13 @@ impl PartialConfig {
             ));
         }
 
-        let severity = parse_severity_map(lint_partial.severity, &mut errors);
+        let (severity, severity_wildcard) = parse_severity_map(lint_partial.severity, &mut errors);
+        let severity_overrides =
+            parse_severity_overrides(lint_partial.severity_overrides, &mut errors);
         let ignore = parse_ignore_list(lint_partial.ignore, &mut errors);
+
+        let schemas_partial = self.schemas.unwrap_or_default();
+        let schemas = finalize_schemas(schemas_partial, &mut errors);
 
         if !errors.is_empty() {
             return Err(ConfigValidationErrors(errors));
@@ -631,10 +756,13 @@ impl PartialConfig {
             lint: LintSettings {
                 rules,
                 severity,
+                severity_wildcard,
+                severity_overrides,
                 max_heading_depth: max_heading_depth.value,
                 ignore,
                 toc: toc_settings,
             },
+            schemas,
         })
     }
 }
@@ -687,6 +815,7 @@ struct LintPartial {
     max_heading_depth: Option<Located<u8>>,
     severity: HashMap<String, Located<String>>,
     ignore: Vec<Located<LintIgnorePartial>>,
+    severity_overrides: Vec<Located<LintSeverityOverridePartial>>,
     toc_start_marker: Option<Located<String>>,
     toc_end_marker: Option<Located<String>>,
 }
@@ -709,6 +838,7 @@ impl LintPartial {
             self.severity.insert(key, value);
         }
         self.ignore.extend(other.ignore);
+        self.severity_overrides.extend(other.severity_overrides);
     }
 }
 
@@ -716,6 +846,73 @@ impl LintPartial {
 struct LintIgnorePartial {
     path: String,
     rules: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+struct LintSeverityOverridePartial {
+    path: String,
+    rules: HashMap<String, String>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct SchemasPartial {
+    entries: HashMap<String, SchemaDefinitionPartial>,
+}
+
+impl SchemasPartial {
+    fn merge(&mut self, other: SchemasPartial) {
+        for (name, definition) in other.entries {
+            self.entries
+                .entry(name)
+                .and_modify(|existing| existing.merge(definition.clone()))
+                .or_insert(definition);
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct SchemaDefinitionPartial {
+    source: Option<ConfigSource>,
+    patterns: Option<Located<Vec<String>>>,
+    required_sections: Option<Located<Vec<String>>>,
+    allow_additional: Option<Located<bool>>,
+    allow_empty: Option<Located<bool>>,
+    min_sections: Option<Located<u32>>,
+    min_heading_level: Option<Located<u8>>,
+    max_heading_level: Option<Located<u8>>,
+    require_top_level_heading: Option<Located<bool>>,
+}
+
+impl SchemaDefinitionPartial {
+    fn merge(&mut self, other: SchemaDefinitionPartial) {
+        if other.source.is_some() {
+            self.source = other.source;
+        }
+        if other.patterns.is_some() {
+            self.patterns = other.patterns;
+        }
+        if other.required_sections.is_some() {
+            self.required_sections = other.required_sections;
+        }
+        if other.allow_additional.is_some() {
+            self.allow_additional = other.allow_additional;
+        }
+        if other.allow_empty.is_some() {
+            self.allow_empty = other.allow_empty;
+        }
+        if other.min_sections.is_some() {
+            self.min_sections = other.min_sections;
+        }
+        if other.min_heading_level.is_some() {
+            self.min_heading_level = other.min_heading_level;
+        }
+        if other.max_heading_level.is_some() {
+            self.max_heading_level = other.max_heading_level;
+        }
+        if other.require_top_level_heading.is_some() {
+            self.require_top_level_heading = other.require_top_level_heading;
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -760,6 +957,187 @@ fn compile_patterns(
     patterns
 }
 
+fn finalize_schemas(
+    partial: SchemasPartial,
+    errors: &mut Vec<ConfigValidationError>,
+) -> SchemaSettings {
+    if partial.entries.is_empty() {
+        errors.push(
+            ConfigValidationError::new(None, "at least one schema definition is required".into())
+                .with_context("schemas"),
+        );
+    }
+
+    let mut definitions: HashMap<String, SchemaDefinition> = HashMap::new();
+    let mut pattern_entries: Vec<SchemaPattern> = Vec::new();
+    let mut default_schema: Option<String> = None;
+
+    for (name, definition) in partial.entries {
+        let SchemaDefinitionPartial {
+            source,
+            patterns,
+            required_sections,
+            allow_additional,
+            allow_empty,
+            min_sections,
+            min_heading_level,
+            max_heading_level,
+            require_top_level_heading,
+        } = definition;
+
+        let schema_source = source.unwrap_or_else(|| ConfigSource::default(PathBuf::from(".")));
+
+        let compiled_patterns = patterns
+            .map(|located| compile_patterns(located, &format!("schemas.{name}.patterns"), errors))
+            .unwrap_or_default();
+
+        let required_sections = required_sections
+            .map(|located| located.value)
+            .unwrap_or_default();
+
+        let allow_additional = allow_additional
+            .map(|located| located.value)
+            .unwrap_or(true);
+        let allow_empty = allow_empty.map(|located| located.value).unwrap_or(false);
+
+        let min_sections_value = min_sections.map(|located| {
+            let value = located.value;
+            if value == 0 {
+                errors.push(
+                    ConfigValidationError::new(
+                        Some(located.source.clone()),
+                        format!("min_sections must be greater than 0 (received {value})"),
+                    )
+                    .with_context(format!("schemas.{name}.min_sections")),
+                );
+            }
+            value
+        });
+
+        let min_heading_level_value = min_heading_level.map(|located| {
+            let value = located.value;
+            if value == 0 || value > 6 {
+                errors.push(ConfigValidationError::new(
+                    Some(located.source.clone()),
+                    format!(
+                        "schemas.{name}.min_heading_level must be between 1 and 6 (received {})",
+                        value
+                    ),
+                ));
+            }
+            value
+        });
+
+        let max_heading_level_value = max_heading_level.map(|located| {
+            let value = located.value;
+            if value == 0 || value > 6 {
+                errors.push(ConfigValidationError::new(
+                    Some(located.source.clone()),
+                    format!(
+                        "schemas.{name}.max_heading_level must be between 1 and 6 (received {})",
+                        value
+                    ),
+                ));
+            }
+            value
+        });
+
+        if let (Some(min), Some(max)) = (min_heading_level_value, max_heading_level_value) {
+            if min > max {
+                errors.push(
+                    ConfigValidationError::new(
+                        Some(schema_source.clone()),
+                        format!(
+                            "schemas.{name}: min_heading_level ({min}) must not exceed max_heading_level ({max})"
+                        ),
+                    ),
+                );
+            }
+        }
+
+        if name == "default" {
+            default_schema = Some(name.clone());
+        }
+
+        let definition_entry = SchemaDefinition {
+            name: name.clone(),
+            source: schema_source.clone(),
+            patterns: compiled_patterns.clone(),
+            required_sections,
+            allow_additional,
+            allow_empty,
+            min_sections: min_sections_value,
+            min_heading_level: min_heading_level_value,
+            max_heading_level: max_heading_level_value,
+            require_top_level_heading: require_top_level_heading.map(|located| located.value),
+        };
+
+        for pattern in &compiled_patterns {
+            pattern_entries.push(SchemaPattern {
+                schema: name.clone(),
+                matcher: pattern.clone(),
+                specificity: pattern_specificity(pattern),
+            });
+        }
+
+        definitions.insert(name, definition_entry);
+    }
+
+    if default_schema.is_none() {
+        errors.push(
+            ConfigValidationError::new(None, "schemas.default must be defined".into())
+                .with_context("schemas"),
+        );
+        if definitions.is_empty() {
+            let fallback_source = ConfigSource::default(PathBuf::from("."));
+            definitions.insert(
+                "default".into(),
+                SchemaDefinition {
+                    name: "default".into(),
+                    source: fallback_source.clone(),
+                    patterns: Vec::new(),
+                    required_sections: Vec::new(),
+                    allow_additional: true,
+                    allow_empty: false,
+                    min_sections: None,
+                    min_heading_level: Some(1),
+                    max_heading_level: Some(4),
+                    require_top_level_heading: Some(true),
+                },
+            );
+        }
+    }
+
+    pattern_entries.sort_by(|a, b| {
+        b.specificity
+            .cmp(&a.specificity)
+            .then_with(|| a.schema.cmp(&b.schema))
+            .then_with(|| a.matcher.original().cmp(b.matcher.original()))
+    });
+
+    SchemaSettings {
+        default_schema: default_schema.unwrap_or_else(|| "default".into()),
+        schemas: definitions,
+        patterns: pattern_entries,
+    }
+}
+
+fn pattern_specificity(pattern: &Pattern) -> PatternSpecificity {
+    let text = pattern.original();
+    let segments = text
+        .split(&['/', '\\'][..])
+        .filter(|segment| !segment.is_empty())
+        .count();
+    let literal_chars = text
+        .chars()
+        .filter(|ch| !matches!(ch, '*' | '?' | '[' | ']' | '{' | '}' | '!'))
+        .count();
+    PatternSpecificity {
+        segments,
+        literal_chars,
+    }
+}
+
 fn parse_rules(
     located: Located<Vec<String>>,
     errors: &mut Vec<ConfigValidationError>,
@@ -796,9 +1174,39 @@ fn parse_rules(
 fn parse_severity_map(
     raw: HashMap<String, Located<String>>,
     errors: &mut Vec<ConfigValidationError>,
-) -> HashMap<LintRule, SeverityLevel> {
+) -> (HashMap<LintRule, SeverityLevel>, Option<SeverityLevel>) {
     let mut result = HashMap::new();
+    let mut wildcard: Option<SeverityLevel> = None;
     for (rule_name, located_value) in raw {
+        if rule_name == "*" {
+            match located_value.value.parse::<SeverityLevel>() {
+                Ok(level) => {
+                    if wildcard.is_some() {
+                        errors.push(
+                            ConfigValidationError::new(
+                                Some(located_value.source.clone()),
+                                "duplicate wildcard entry in lint.severity".into(),
+                            )
+                            .with_context("lint.severity"),
+                        );
+                    } else {
+                        wildcard = Some(level);
+                    }
+                }
+                Err(_) => errors.push(
+                    ConfigValidationError::new(
+                        Some(located_value.source.clone()),
+                        format!(
+                            "invalid severity '{}' for wildcard entry",
+                            located_value.value
+                        ),
+                    )
+                    .with_context("lint.severity"),
+                ),
+            }
+            continue;
+        }
+
         match rule_name.parse::<LintRule>() {
             Ok(rule) => match located_value.value.parse::<SeverityLevel>() {
                 Ok(level) => {
@@ -824,7 +1232,131 @@ fn parse_severity_map(
             ),
         }
     }
-    result
+    (result, wildcard)
+}
+
+fn parse_severity_overrides(
+    entries: Vec<Located<LintSeverityOverridePartial>>,
+    errors: &mut Vec<ConfigValidationError>,
+) -> Vec<LintSeverityOverride> {
+    let mut overrides = Vec::new();
+    for entry in entries {
+        let Located { value, source } = entry;
+        let pattern = match Pattern::new(source.clone(), value.path.clone()) {
+            Ok(pattern) => pattern,
+            Err(err) => {
+                errors.push(err.with_context("lint.severity_overrides"));
+                continue;
+            }
+        };
+
+        let matcher = pattern.glob().compile_matcher();
+        let mut rules = HashMap::new();
+        let mut wildcard = None;
+
+        if value.rules.is_empty() {
+            errors.push(
+                ConfigValidationError::new(
+                    Some(source.clone()),
+                    format!(
+                        "lint.severity_overrides entry for pattern '{}' must specify at least one rule",
+                        pattern.original()
+                    ),
+                )
+                .with_context("lint.severity_overrides"),
+            );
+            continue;
+        }
+
+        for (rule_name, severity_value) in value.rules {
+            if rule_name == "*" {
+                match severity_value.parse::<SeverityLevel>() {
+                    Ok(level) => {
+                        if wildcard.is_some() {
+                            errors.push(
+                                ConfigValidationError::new(
+                                    Some(source.clone()),
+                                    format!(
+                                "duplicate wildcard entry in lint.severity_overrides for pattern '{}'",
+                                        pattern.original()
+                                    ),
+                                )
+                                .with_context("lint.severity_overrides"),
+                            );
+                        } else {
+                            wildcard = Some(level);
+                        }
+                    }
+                    Err(_) => errors.push(
+                        ConfigValidationError::new(
+                            Some(source.clone()),
+                            format!(
+                                "invalid severity '{}' for wildcard in lint.severity_overrides pattern '{}'",
+                                severity_value,
+                                pattern.original()
+                            ),
+                        )
+                        .with_context("lint.severity_overrides"),
+                    ),
+                }
+                continue;
+            }
+
+            match rule_name.parse::<LintRule>() {
+                Ok(rule) => match severity_value.parse::<SeverityLevel>() {
+                    Ok(level) => {
+                        rules.insert(rule, level);
+                    }
+                    Err(_) => errors.push(
+                        ConfigValidationError::new(
+                            Some(source.clone()),
+                            format!(
+                                "invalid severity '{}' for rule '{}' in lint.severity_overrides pattern '{}'",
+                                severity_value,
+                                rule_name,
+                                pattern.original()
+                            ),
+                        )
+                        .with_context("lint.severity_overrides"),
+                    ),
+                },
+                Err(_) => errors.push(
+                    ConfigValidationError::new(
+                        Some(source.clone()),
+                        format!(
+                                "unknown lint rule '{}' in lint.severity_overrides pattern '{}'",
+                            rule_name,
+                            pattern.original()
+                        ),
+                    )
+                    .with_context("lint.severity_overrides"),
+                ),
+            }
+        }
+
+        if rules.is_empty() && wildcard.is_none() {
+                errors.push(
+                    ConfigValidationError::new(
+                        Some(source.clone()),
+                        format!(
+                                "lint.severity_overrides pattern '{}' produced no recognised rules",
+                                pattern.original()
+                        ),
+                    )
+                    .with_context("lint.severity_overrides"),
+                );
+            continue;
+        }
+
+        overrides.push(LintSeverityOverride {
+            path: pattern,
+            matcher,
+            rules,
+            wildcard,
+            source,
+        });
+    }
+    overrides
 }
 
 fn parse_ignore_list(
@@ -833,18 +1365,20 @@ fn parse_ignore_list(
 ) -> Vec<LintIgnore> {
     let mut result = Vec::new();
     for entry in entries {
-        let pattern = match Pattern::new(entry.source.clone(), entry.value.path.clone()) {
+        let Located { value, source } = entry;
+        let pattern = match Pattern::new(source.clone(), value.path.clone()) {
             Ok(pattern) => pattern,
             Err(err) => {
                 errors.push(err.with_context("lint.ignore"));
                 continue;
             }
         };
+        let matcher = pattern.glob().compile_matcher();
 
-        if entry.value.rules.is_empty() {
+        if value.rules.is_empty() {
             errors.push(
                 ConfigValidationError::new(
-                    Some(entry.source.clone()),
+                    Some(source.clone()),
                     format!(
                         "lint.ignore entry for pattern '{}' must specify at least one rule",
                         pattern.original()
@@ -855,13 +1389,18 @@ fn parse_ignore_list(
             continue;
         }
 
+        let mut all_rules = false;
         let mut rules = Vec::new();
-        for rule_name in entry.value.rules {
+        for rule_name in value.rules {
+            if rule_name == "*" {
+                all_rules = true;
+                continue;
+            }
             match rule_name.parse::<LintRule>() {
                 Ok(rule) => rules.push(rule),
                 Err(_) => errors.push(
                     ConfigValidationError::new(
-                        Some(entry.source.clone()),
+                        Some(source.clone()),
                         format!(
                             "unknown lint rule '{}' in lint.ignore entry for pattern '{}'",
                             rule_name,
@@ -873,10 +1412,31 @@ fn parse_ignore_list(
             }
         }
 
+        if !all_rules && rules.is_empty() {
+            errors.push(
+                ConfigValidationError::new(
+                    Some(source.clone()),
+                    format!(
+                        "lint.ignore entry for pattern '{}' produced no recognised rules",
+                        pattern.original()
+                    ),
+                )
+                .with_context("lint.ignore"),
+            );
+            continue;
+        }
+
+        let rules = if all_rules {
+            LintIgnoreRules::All
+        } else {
+            LintIgnoreRules::Specific(rules)
+        };
+
         result.push(LintIgnore {
             path: pattern,
+            matcher,
             rules,
-            source: entry.source,
+            source,
         });
     }
     result
@@ -887,6 +1447,7 @@ struct ResolvedConfig {
     project: ProjectSettings,
     catalog: CatalogSettings,
     lint: LintSettings,
+    schemas: SchemaSettings,
 }
 
 /// Container for validation failures, formatted as a bullet list.
@@ -956,6 +1517,8 @@ struct RawConfig {
     catalog: Option<RawCatalog>,
     #[serde(default)]
     lint: Option<RawLint>,
+    #[serde(default)]
+    schemas: Option<HashMap<String, RawSchema>>,
 }
 
 impl RawConfig {
@@ -967,7 +1530,19 @@ impl RawConfig {
             catalog: self
                 .catalog
                 .map(|catalog| catalog.into_partial(source.clone())),
-            lint: self.lint.map(|lint| lint.into_partial(source)),
+            lint: self.lint.map(|lint| lint.into_partial(source.clone())),
+            schemas: self.schemas.map(|schemas| {
+                let mut resolved = SchemasPartial::default();
+                for (name, schema) in schemas {
+                    let partial = schema.into_partial(&name, source.clone());
+                    resolved
+                        .entries
+                        .entry(name)
+                        .and_modify(|existing| existing.merge(partial.clone()))
+                        .or_insert(partial);
+                }
+                resolved
+            }),
         }
     }
 }
@@ -1032,6 +1607,8 @@ struct RawLint {
     severity: HashMap<String, String>,
     #[serde(default)]
     ignore: Vec<RawLintIgnore>,
+    #[serde(default)]
+    severity_overrides: Vec<RawLintSeverityOverride>,
 }
 
 impl RawLint {
@@ -1056,6 +1633,20 @@ impl RawLint {
             })
             .collect();
 
+        let severity_overrides = self
+            .severity_overrides
+            .into_iter()
+            .map(|entry| {
+                Located::new(
+                    LintSeverityOverridePartial {
+                        path: entry.path,
+                        rules: entry.rules,
+                    },
+                    source.clone(),
+                )
+            })
+            .collect();
+
         LintPartial {
             rules: self.rules.map(|value| Located::new(value, source.clone())),
             max_heading_depth: self
@@ -1069,7 +1660,63 @@ impl RawLint {
                 .map(|value| Located::new(value, source.clone())),
             severity,
             ignore,
+            severity_overrides,
         }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RawSchema {
+    #[serde(default)]
+    patterns: Option<Vec<String>>,
+    #[serde(default)]
+    required_sections: Option<Vec<String>>,
+    #[serde(default)]
+    allow_additional: Option<bool>,
+    #[serde(default)]
+    allow_empty: Option<bool>,
+    #[serde(default)]
+    min_sections: Option<u32>,
+    #[serde(default)]
+    min_heading_level: Option<u8>,
+    #[serde(default)]
+    max_heading_level: Option<u8>,
+    #[serde(default)]
+    require_top_level_heading: Option<bool>,
+}
+
+impl RawSchema {
+    fn into_partial(self, _name: &str, source: ConfigSource) -> SchemaDefinitionPartial {
+        let mut partial = SchemaDefinitionPartial {
+            source: Some(source.clone()),
+            ..SchemaDefinitionPartial::default()
+        };
+        if let Some(patterns) = self.patterns {
+            partial.patterns = Some(Located::new(patterns, source.clone()));
+        }
+        if let Some(required_sections) = self.required_sections {
+            partial.required_sections = Some(Located::new(required_sections, source.clone()));
+        }
+        if let Some(allow_additional) = self.allow_additional {
+            partial.allow_additional = Some(Located::new(allow_additional, source.clone()));
+        }
+        if let Some(allow_empty) = self.allow_empty {
+            partial.allow_empty = Some(Located::new(allow_empty, source.clone()));
+        }
+        if let Some(min_sections) = self.min_sections {
+            partial.min_sections = Some(Located::new(min_sections, source.clone()));
+        }
+        if let Some(min_heading_level) = self.min_heading_level {
+            partial.min_heading_level = Some(Located::new(min_heading_level, source.clone()));
+        }
+        if let Some(max_heading_level) = self.max_heading_level {
+            partial.max_heading_level = Some(Located::new(max_heading_level, source.clone()));
+        }
+        if let Some(require_top_level_heading) = self.require_top_level_heading {
+            partial.require_top_level_heading =
+                Some(Located::new(require_top_level_heading, source));
+        }
+        partial
     }
 }
 
@@ -1078,4 +1725,11 @@ struct RawLintIgnore {
     path: String,
     #[serde(default)]
     rules: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawLintSeverityOverride {
+    path: String,
+    #[serde(default)]
+    rules: HashMap<String, String>,
 }

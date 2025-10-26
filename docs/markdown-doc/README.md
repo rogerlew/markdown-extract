@@ -51,7 +51,7 @@ The operations layer wires parser output into the user-facing commands:
   - `duplicate-anchors` – flags repeated heading slugs within a single document.
   - `heading-hierarchy` – detects skipped levels and headings exceeding `lint.max_heading_depth`.
   - `toc-sync` – compares declared TOC blocks (between `lint.toc_start_marker`/`lint.toc_end_marker`) against the live heading tree.
-  - `required-sections` – stubbed pending Agent&nbsp;6’s schema matcher (rule enables cleanly but emits no findings without schema data).
+  - `required-sections` – delegates to the shared schema matcher so linting surfaces the same structural issues as `validate`.
 
 Rules respect severity overrides (`lint.severity`), per-path ignores, and emit findings annotated with the originating rule. Output formats (plain/JSON/SARIF) expose the same metadata, making it straightforward for downstream automation to slice by rule. Both commands continue to share the `ScanOptions` plumbing (`--path`, `--staged`) so future operations can reuse targeting logic.
 
@@ -60,6 +60,16 @@ Configuration additions:
 - `lint.rules` defaults to `broken-links` but can enable any subset of the Phase&nbsp;2 rules.
 - `lint.toc_start_marker` / `lint.toc_end_marker` control which markers delineate TOC regions for `toc-sync` (defaults remain `<!-- toc -->` / `<!-- tocstop -->`).
 - `lint.max_heading_depth` still bounds allowable heading levels; `heading-hierarchy` enforces the limit.
+
+## Validate Command & Schema Matcher
+
+The `validate` command builds on the schema engine delivered in Phase&nbsp;2:
+
+1. Configuration supplies `[schemas]` entries with glob patterns, required section order, depth bounds, and duplicate allowances.
+2. `SchemaEngine` resolves the schema for each document (falling back to the default when no pattern matches or `--schema` is omitted).
+3. Violations (missing sections, ordering mistakes, unexpected/extra headings, depth overflows, missing top-level headings, empty documents) are emitted as structured `SchemaViolation`s reused by both `validate` and the `required-sections` lint rule.
+
+`markdown-doc validate` mirrors the lint UX: plain output for humans, JSON for tooling, and exit codes (`0` success, `1` validation failures, `2` unknown schema, `3` runtime/config errors). This keeps lightweight linting and deep template enforcement consistent while allowing future Agent&nbsp;6 work to extend schema semantics without duplicating logic.
 
 ## CI & Benchmarks
 

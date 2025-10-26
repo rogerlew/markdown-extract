@@ -25,6 +25,7 @@ fn lint_options(paths: &[&str]) -> LintOptions {
         scan: ScanOptions {
             paths: paths.iter().map(PathBuf::from).collect(),
             staged: false,
+            respect_ignore: true,
         },
         format: LintFormat::Plain,
     }
@@ -141,4 +142,71 @@ fn required_sections_noop_without_schema() {
 
     assert_eq!(outcome.exit_code, 0);
     assert!(outcome.report.findings.is_empty());
+}
+
+#[test]
+fn required_sections_rule_reports_missing_sections() {
+    let temp = TempDir::new().expect("tempdir");
+    setup_file(&temp, "docs/guide.md", "# Title\n");
+
+    let mut config = base_config(&temp);
+    config.lint.rules = vec![LintRule::RequiredSections];
+    if let Some(default_schema) = config.schemas.schemas.get_mut("default") {
+        default_schema.required_sections = vec!["Overview".to_string()];
+        default_schema.allow_additional = true;
+    }
+
+    let ops = Operations::new(config);
+    let outcome = ops
+        .lint(lint_options(&["docs/guide.md"]))
+        .expect("lint execution");
+
+    assert_eq!(outcome.exit_code, 1);
+    assert!(outcome.report.findings.iter().any(|finding| finding.rule
+        == LintRule::RequiredSections
+        && finding
+            .message
+            .contains("Missing required section 'Overview'")));
+}
+
+#[test]
+fn per_path_severity_override_reenables_rule() {
+    let temp = TempDir::new().expect("tempdir");
+    let config_contents = concat!(
+        "[lint]\n",
+        "rules = [\"broken-links\"]\n\n",
+        "[lint.severity]\n",
+        "broken-links = \"ignore\"\n\n",
+        "[[lint.severity_overrides]]\n",
+        "path = \"docs/**\"\n",
+        "[lint.severity_overrides.rules]\n",
+        "broken-links = \"error\"\n\n",
+        "[[lint.severity_overrides]]\n",
+        "path = \"legacy/**\"\n",
+        "[lint.severity_overrides.rules]\n",
+        "\"*\" = \"ignore\"\n",
+    );
+    setup_file(&temp, ".markdown-doc.toml", config_contents);
+
+    setup_file(
+        &temp,
+        "docs/source.md",
+        "# Title\n\nSee [missing](missing.md).\n",
+    );
+
+    let config = base_config(&temp);
+    let ops = Operations::new(config);
+    let outcome = ops
+        .lint(lint_options(&["docs/source.md"]))
+        .expect("lint execution");
+
+    assert_eq!(outcome.exit_code, 1, "override should re-enable rule");
+    assert!(
+        outcome
+            .report
+            .findings
+            .iter()
+            .any(|finding| finding.message.contains("missing.md")),
+        "expected broken-links finding even though base severity was ignore",
+    );
 }

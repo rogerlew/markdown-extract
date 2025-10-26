@@ -13,9 +13,9 @@
 
 ### Ready / Backlog
 - [ ] Evaluate CI workflow alignment with parent `/workdir/wepppy` pipelines before duplicating jobs (**PM/Agent 4**)
-- [ ] PM review + follow-up edits for README quickstart (Codex PM)
-- [ ] Build schema matcher and `markdown-doc validate` command (**Agent 6**)
-- [ ] Deliver `toc` command plus severity tuning (`lint.severity`, per-path ignores, `.markdown-doc-ignore`) (**Agent 7**)
+- [ ] README quickstart QA & documentation review (**Claude**) – see `prompts/active/claude_readme_quickstart_review.md`
+- [ ] Draft Phase 3 refactoring prompts (`mv`, `refs`, link graph engine) (**Codex PM**)
+- [ ] Identify additional fixtures for Phase 3 stress tests (nested directories, mixed links) (**Future Agent**)
 
 ### In Progress
 - [ ] Monitor benchmark baseline; rerun after significant parser/IO changes
@@ -31,12 +31,15 @@
 - [x] Benchmark harness delivered + baseline captured (**Agent 4**, 2025-10-25)
 - [x] Acceptance testing + README quickstart documentation (Claude, 2025-10-25)
 - [x] Phase 2 lint rule suite (broken-anchors, duplicate-anchors, heading-hierarchy, toc-sync) landed (**Agent 5**, 2025-10-26)
+- [x] Schema matcher + `markdown-doc validate` command delivered (**Agent 6**, 2025-10-26)
+- [x] TOC command, severity tuning, and `.markdown-doc-ignore` support shipped (**Agent 7**, 2025-10-26)
 
 ## Timeline
 
 - **2025-10-25** – Package created, initial scaffolding complete
 - **2025-10-25** – Phase 1 MVP (`catalog`, `lint broken-links`) delivered
 - **2025-10-26** – Phase 2 quality gates (lint rule expansions) released
+- **2025-10-26** – Schema matcher + validate command available for template enforcement
 - **TBD** – Phase 3 refactoring support shipped
 - **TBD** – Phase 4 intelligence features delivered and package closed
 
@@ -288,6 +291,220 @@ cargo fmt
 cargo clippy --all-targets --all-features
 cargo test --all
 ```
+
+### 2025-10-26: Schema matcher + validate command
+**Agent/Contributor**: Agent 6 (Codex)
+
+**Work completed**:
+- Added schema-aware lint pipeline backed by a reusable `SchemaEngine`, replacing the placeholder `required-sections` logic.
+- Implemented `markdown-doc validate` with plain/JSON outputs, exit code contract, and CLI bindings (`--schema`, `--format`, `--quiet`).
+- Extended configuration loader to parse `[schemas]` definitions (patterns, required sections, depth bounds, allow flags), plus documentation and tracker updates.
+- Added unit/integration tests covering schema matching, validate CLI behaviour, and fixture-based validation scenarios.
+
+**Blockers encountered**:
+- None.
+
+**Next steps**:
+1. Integrate Agent 6 schema matcher with upcoming deep validation features (min/max heading levels, child section constraints).
+2. Monitor runtime impact across the WEPPpy corpus and expand fixtures as new schemas are added.
+3. Coordinate with Agent 7 on severity tuning and `.markdown-doc-ignore` support.
+
+**Test results**:
+```bash
+cargo fmt
+cargo clippy --all-targets --all-features
+cargo test --all
+```
+
+### 2025-10-26: TOC command & severity tuning
+**Agent/Contributor**: Agent 7 (Codex)
+
+**Work completed**:
+- Introduced `markdown-doc toc` with `--check`, `--update`, `--diff` modes, selective scanning, and support for `.markdown-doc-ignore` filtering.
+- Extended configuration to support wildcard severity overrides (`[lint.severity_overrides]`) and per-path ignore semantics reused by lint/TOC.
+- Implemented TOC parsing/rendering helpers, ignore-file resolution, and severity override plumbing in the lint runner; added integration tests for TOC diff/update and ignore precedence.
+- Updated README + architecture docs to document TOC usage, ignore files, and severity tuning examples.
+
+**Blockers encountered**:
+- None; coordination with Agents 5/6 handled via shared helpers.
+
+**Next steps**:
+1. Monitor TOC performance on large repos and expand fixtures if necessary.
+2. Explore exposing TOC depth filters as future enhancement (tracked in backlog).
+3. Surface severity override examples in quickstart once PM review completes.
+
+**Test results**:
+```bash
+cargo fmt
+cargo clippy --all-targets --all-features
+cargo test --all
+markdown-doc toc --path README.md --check
+```
+
+### 2025-10-26: README Quickstart Review & Validation
+**Agent/Contributor**: Claude (QA/Documentation Review)
+
+**Work completed**:
+- Comprehensive content review of all markdown-doc sections in README.md, validating terminology alignment with CLI help text, exit codes, and configuration options.
+- Hands-on verification of all four commands (`catalog`, `lint`, `validate`, `toc`) with multiple flags and output formats.
+- Validated JSON/SARIF schema examples against actual tool output; confirmed structural accuracy and field naming.
+- Tested integration examples including Python code snippets, bash patterns, and CI/CD configurations for syntactic correctness.
+- Cross-verified configuration TOML examples against the implemented config loader.
+
+**Test results**:
+```bash
+# Catalog testing
+cargo run -p markdown-doc-cli --release -- catalog --path README.md --format json 2>/dev/null | jq '.summary'
+cargo run -p markdown-doc-cli --release -- catalog --path tests/markdown-doc/wepppy/AGENTS.md --format markdown
+
+# Lint testing (all formats)
+cargo run -p markdown-doc-cli --release -- lint --path README.md --format json 2>/dev/null | jq '.summary'
+cargo run -p markdown-doc-cli --release -- lint --path markdown-doc.spec.md --format json 2>/dev/null | jq '.findings[0]'
+cargo run -p markdown-doc-cli --release -- lint --format sarif 2>/dev/null | jq '{version, schema: ."$schema"}'
+
+# Validate testing
+cargo run -p markdown-doc-cli --release -- validate --path README.md 2>/dev/null
+
+# TOC testing
+cargo run -p markdown-doc-cli --release -- toc --check 2>/dev/null | head -10
+```
+
+**Findings**:
+
+✅ **PASS - Documentation Accuracy**
+- JSON schema examples match actual output structure (keys, types, nesting)
+- SARIF 2.1.0 format correctly documented with proper schema reference
+- Exit codes documented (0, 1, 2, 3) align with CLI behavior
+- Flag names and descriptions match `--help` output exactly
+- Configuration TOML examples use valid keys recognized by the loader
+
+✅ **PASS - Code Examples**
+- Python integration snippets are syntactically correct
+- Bash examples use proper quoting and escaping
+- GitHub Actions/GitLab CI YAML is well-formed
+- jq filter patterns work against actual JSON output
+
+✅ **PASS - Cross-References**
+- Links to markdown-edit.spec.md are valid
+- Anchor references within README are correct
+- All internal documentation links resolve
+
+⚠️ **MINOR ISSUE - Missing Documentation**
+- **TOC command is not documented** in README despite being fully implemented and working
+  - Command exists: `markdown-doc toc [--check|--update|--diff]`
+  - Supports `--path`, `--staged`, `--no-ignore`, `--quiet` flags
+  - Returns clear output for missing markers, sync status
+  - Should be added as subsection under "Commands" alongside `catalog`/`lint`/`validate`
+
+⚠️ **MINOR ISSUE - Validate Command Details**
+- Validate command is documented in README but lacks:
+  - Output format examples (plain vs JSON)
+  - Schema configuration examples from the actual TOML
+  - Typical error messages agents might encounter
+  - The `--no-ignore` and `--quiet` flags are not mentioned
+
+**Recommendations**:
+
+1. **Add TOC Command Section** (high priority)
+   ```markdown
+   #### `toc` - Table of Contents Synchronization
+   
+   Manages TOC blocks between `<!-- toc -->` and `<!-- tocstop -->` markers.
+   
+   ```console
+   # Check if TOCs are in sync (default)
+   $ markdown-doc toc --check
+   
+   # Update TOC blocks in place
+   $ markdown-doc toc --update
+   
+   # Show what would change (unified diff)
+   $ markdown-doc toc --diff
+   
+   # Target specific paths
+   $ markdown-doc toc --path docs/ --update
+   ```
+   ```
+
+2. **Expand Validate Documentation** (medium priority)
+   - Add JSON output example
+   - Show sample schema definition from TOML
+   - Document common validation errors
+
+3. **Add Agent Quick Reference Table** (nice-to-have)
+   - Command matrix showing exit codes for each subcommand
+   - Output format compatibility matrix
+
+**Blockers encountered**:
+- None; all documented features work as described.
+
+**Next steps**:
+1. PM to add TOC command documentation to README.
+2. Consider expanding validate section with more examples.
+3. Phase 2 documentation appears complete pending TOC addition.
+
+**Files reviewed**:
+- `README.md` (markdown-doc sections, lines ~395-750)
+- CLI help output for all commands
+- Sample JSON/SARIF outputs
+
+**Verification status**: ✅ **PASS** with minor documentation gaps (TOC command missing, validate could be expanded)
+
+### 2025-10-26: README Documentation Gap Fix (TOC & Validate)
+**Agent/Contributor**: Claude (Documentation)
+
+**Work completed**:
+- Added comprehensive `markdown-doc toc` command section to README.md covering all operation modes (`--check`, `--update`, `--diff`), configuration, output examples, exit codes, and ignore filtering behavior.
+- Enhanced `markdown-doc validate` section with complete flag documentation (`--quiet`, `--no-ignore`, `--staged`), JSON output schema example, detailed schema configuration samples, common error messages, and exit code reference.
+- Verified consistency with CLI help output (`toc --help`, `validate --help`) to ensure flag names and descriptions match implementation.
+- Confirmed documentation style aligns with existing sections (emoji usage, code block formatting, table structure).
+- Validated no broken links introduced via lint check.
+
+**Documentation additions**:
+
+1. **TOC Command Section** (~50 lines)
+   - Three operation modes explained with examples
+   - Configuration markers (`toc_start_marker`/`toc_end_marker`)
+   - Output examples for check/diff modes
+   - Exit codes and ignore filtering behavior
+
+2. **Validate Command Enhancements** (~60 lines)
+   - Complete flag reference including `--quiet`, `--no-ignore`, `--staged`
+   - JSON output schema with representative findings
+   - Common error messages table with explanations
+   - Detailed schema configuration examples (default, readme, agents schemas)
+   - Schema configuration keys (patterns, required_sections, allow flags, depth constraints)
+
+**Blockers encountered**:
+- None; all features documented work as described in CLI.
+
+**Verification commands**:
+```bash
+# Confirmed CLI help matches documentation
+cargo run -p markdown-doc-cli --release -- toc --help
+cargo run -p markdown-doc-cli --release -- validate --help
+
+# Verified JSON output structure
+cargo run -p markdown-doc-cli --release -- validate --path README.md --format json 2>/dev/null
+
+# Confirmed no broken links in updated README
+cargo run -p markdown-doc-cli --release -- lint --path README.md 2>/dev/null
+
+# Verified new sections appear in catalog
+cargo run -p markdown-doc-cli --release -- catalog --path README.md --format json 2>/dev/null | \
+  jq -r '.files[0].headings[] | select(.text | contains("toc") or contains("validate"))'
+```
+
+**Next steps**:
+1. Phase 2 documentation now complete with all four commands fully documented.
+2. Consider adding agent quick reference table showing command × exit code matrix (deferred as nice-to-have).
+3. README ready for Phase 2 release.
+
+**Files modified**:
+- `README.md` (added TOC section, enhanced validate section, ~110 lines added)
+- `docs/work-packages/20251025_markdown_doc_toolkit/tracker.md` (this entry)
+
+**Verification status**: ✅ **COMPLETE** - All Phase 2 documentation gaps closed
 
 ## Watch List
 

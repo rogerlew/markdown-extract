@@ -42,6 +42,7 @@ fn main() -> Result<()> {
             scan: ScanOptions {
                 paths: vec![target.clone()],
                 staged: false,
+                respect_ignore: true,
             },
             format: CatalogFormat::Markdown,
             output_path: None,
@@ -56,6 +57,7 @@ fn main() -> Result<()> {
             scan: ScanOptions {
                 paths: vec![target.clone()],
                 staged: false,
+                respect_ignore: true,
             },
             format: LintFormat::Json,
         };

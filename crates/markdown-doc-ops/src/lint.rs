@@ -3,15 +3,23 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use globset::GlobMatcher;
-use markdown_doc_config::{Config, LintIgnore, LintRule, SeverityLevel, TocSettings};
+use markdown_doc_config::{
+    Config, LintIgnore, LintIgnoreRules, LintRule, SeverityLevel, TocSettings,
+};
 use markdown_doc_format::LintFinding;
 use markdown_doc_parser::{DocumentSection, ParserContext};
-use percent_encoding::percent_decode_str;
 use pulldown_cmark::{Event, Options, Parser, Tag};
 use rayon::prelude::*;
 use strsim::normalized_levenshtein;
 
-use crate::OperationError;
+use crate::{
+    anchors::normalize_anchor_fragment,
+    lines::{byte_to_line, compute_line_offsets},
+    schema::SchemaEngine,
+    toc,
+    toc::{TocBlock, TocEntry},
+    OperationError,
+};
 
 /// Result produced by the lint engine prior to rendering.
 pub(crate) struct LintResult {
@@ -27,28 +35,7 @@ pub(crate) struct LintRunInput<'a> {
     pub parser: &'a ParserContext,
     pub targets: &'a [PathBuf],
     pub root: &'a Path,
-    pub schema_provider: &'a dyn SchemaProvider,
-}
-
-/// Trait describing schema requirements made available to the required-sections rule.
-pub trait SchemaProvider: Send + Sync {
-    fn required_sections(&self, _path: &Path) -> Option<SchemaMatch> {
-        None
-    }
-}
-
-/// Placeholder schema match representation for future integration.
-#[derive(Clone, Debug, Default)]
-pub struct SchemaMatch {
-    pub required_headings: Vec<SchemaRequirement>,
-}
-
-/// Individual schema requirement entry.
-#[allow(dead_code)]
-#[derive(Clone, Debug, Default)]
-pub struct SchemaRequirement {
-    pub heading: String,
-    pub minimum_depth: Option<usize>,
+    pub schema_engine: &'a SchemaEngine,
 }
 
 /// Execute lint rules across the provided targets.
@@ -69,7 +56,7 @@ pub(crate) fn run(input: LintRunInput<'_>) -> Result<LintResult, OperationError>
         parser: input.parser,
         root: input.root,
         anchor_cache: Arc::new(AnchorCache::default()),
-        schema_provider: input.schema_provider,
+        schema_engine: input.schema_engine,
     };
 
     let findings = input
@@ -110,7 +97,6 @@ pub(crate) fn run(input: LintRunInput<'_>) -> Result<LintResult, OperationError>
 #[derive(Clone)]
 struct ActiveRule {
     rule: LintRule,
-    severity: SeverityLevel,
     executor: RuleExecutor,
 }
 
@@ -127,7 +113,7 @@ struct LintEnvironment<'a> {
     parser: &'a ParserContext,
     root: &'a Path,
     anchor_cache: Arc<AnchorCache>,
-    schema_provider: &'a dyn SchemaProvider,
+    schema_engine: &'a SchemaEngine,
 }
 
 #[derive(Default)]
@@ -176,8 +162,7 @@ fn build_active_rules(config: &Config) -> Vec<ActiveRule> {
         .rules
         .iter()
         .filter_map(|rule| {
-            let severity = config.lint.severity_for(*rule);
-            if severity == SeverityLevel::Ignore {
+            if !config.lint.is_rule_enabled(*rule) {
                 return None;
             }
 
@@ -192,7 +177,6 @@ fn build_active_rules(config: &Config) -> Vec<ActiveRule> {
 
             Some(ActiveRule {
                 rule: *rule,
-                severity,
                 executor,
             })
         })
@@ -205,11 +189,17 @@ fn build_ignore_map(
 ) -> HashMap<LintRule, Vec<GlobMatcher>> {
     let mut map = HashMap::new();
     for active in active_rules {
-        let matchers = ignores
-            .iter()
-            .filter(|ignore| ignore.rules.contains(&active.rule))
-            .map(|ignore| ignore.path.glob().compile_matcher())
-            .collect();
+        let mut matchers = Vec::new();
+        for ignore in ignores {
+            match &ignore.rules {
+                LintIgnoreRules::All => matchers.push(ignore.matcher.clone()),
+                LintIgnoreRules::Specific(rules) => {
+                    if rules.contains(&active.rule) {
+                        matchers.push(ignore.matcher.clone());
+                    }
+                }
+            }
+        }
         map.insert(active.rule, matchers);
     }
     map
@@ -256,6 +246,15 @@ fn process_file(
             continue;
         }
 
+        let severity = env
+            .config
+            .lint
+            .severity_for_path(&snapshot.relative_path, active.rule);
+
+        if severity == SeverityLevel::Ignore {
+            continue;
+        }
+
         let findings = (active.executor)(&snapshot, env);
         for finding in findings {
             results.push(LintFinding {
@@ -263,7 +262,7 @@ fn process_file(
                 path: snapshot.relative_path.clone(),
                 line: finding.line,
                 message: finding.message,
-                severity: active.severity,
+                severity,
             });
         }
     }
@@ -338,38 +337,7 @@ impl FileSnapshot {
     }
 
     fn toc_block(&self, settings: &TocSettings) -> Option<TocBlock> {
-        parse_toc_block(&self.contents, settings)
-    }
-}
-
-#[derive(Clone)]
-struct TocBlock {
-    start_line: usize,
-    entries: Vec<TocEntry>,
-}
-
-#[derive(Clone)]
-struct TocEntry {
-    anchor: String,
-    text: String,
-    line: usize,
-}
-
-fn compute_line_offsets(contents: &str) -> Vec<usize> {
-    let mut offsets = Vec::new();
-    offsets.push(0);
-    for (idx, ch) in contents.char_indices() {
-        if ch == '\n' {
-            offsets.push(idx + 1);
-        }
-    }
-    offsets
-}
-
-fn byte_to_line(byte: usize, offsets: &[usize]) -> usize {
-    match offsets.binary_search(&byte) {
-        Ok(idx) => idx + 1,
-        Err(idx) => idx,
+        toc::locate_block(&self.contents, settings)
     }
 }
 
@@ -567,15 +535,19 @@ fn evaluate_heading_hierarchy(snapshot: &FileSnapshot, env: &LintEnvironment) ->
 }
 
 fn evaluate_required_sections(snapshot: &FileSnapshot, env: &LintEnvironment) -> Vec<RuleFinding> {
-    if let Some(schema) = env
-        .schema_provider
-        .required_sections(&snapshot.relative_path)
-    {
-        if !schema.required_headings.is_empty() {
-            // Placeholder stub until Agent 6 delivers schema matcher.
-        }
-    }
-    Vec::new()
+    let schema = env.schema_engine.schema_for_path(&snapshot.relative_path);
+    let check = env
+        .schema_engine
+        .check(schema, &snapshot.sections, &snapshot.line_offsets);
+
+    check
+        .violations
+        .into_iter()
+        .map(|violation| RuleFinding {
+            line: violation.line,
+            message: violation.message,
+        })
+        .collect()
 }
 
 fn evaluate_toc_sync(snapshot: &FileSnapshot, env: &LintEnvironment) -> Vec<RuleFinding> {
@@ -644,64 +616,6 @@ fn evaluate_toc_sync(snapshot: &FileSnapshot, env: &LintEnvironment) -> Vec<Rule
     findings
 }
 
-fn parse_toc_block(contents: &str, settings: &TocSettings) -> Option<TocBlock> {
-    let mut in_block = false;
-    let mut start_line = 0usize;
-    let mut entries = Vec::new();
-
-    for (idx, line) in contents.lines().enumerate() {
-        let trimmed = line.trim();
-        if !in_block {
-            if trimmed == settings.start_marker {
-                in_block = true;
-                start_line = idx + 1;
-            }
-            continue;
-        }
-
-        if trimmed == settings.end_marker {
-            return Some(TocBlock {
-                start_line,
-                entries,
-            });
-        }
-
-        if let Some(entry) = parse_toc_entry(line, idx + 1) {
-            entries.push(entry);
-        }
-    }
-
-    None
-}
-
-fn parse_toc_entry(line: &str, line_number: usize) -> Option<TocEntry> {
-    let trimmed = line.trim_start();
-    if !trimmed.starts_with(['-', '*', '+']) {
-        return None;
-    }
-    let after_bullet = trimmed[1..].trim_start();
-    if !after_bullet.starts_with('[') {
-        return None;
-    }
-    let end_text = after_bullet.find(']')?;
-    let text = after_bullet[1..end_text].trim().to_string();
-    let remaining = after_bullet[end_text + 1..].trim_start();
-    if !remaining.starts_with('(') {
-        return None;
-    }
-    let end_paren = remaining.find(')')?;
-    let target = remaining[1..end_paren].trim();
-    if !target.starts_with('#') {
-        return None;
-    }
-
-    Some(TocEntry {
-        anchor: normalize_anchor_fragment(&target[1..]),
-        text,
-        line: line_number,
-    })
-}
-
 fn is_external(target: &str) -> bool {
     let lower = target.to_ascii_lowercase();
     lower.starts_with("http://")
@@ -728,13 +642,6 @@ fn split_link_target(target: &str) -> (&str, Option<&str>) {
     } else {
         (target, None)
     }
-}
-
-fn normalize_anchor_fragment(fragment: &str) -> String {
-    percent_decode_str(fragment)
-        .decode_utf8_lossy()
-        .trim()
-        .to_ascii_lowercase()
 }
 
 struct ResolvedPath {

@@ -488,6 +488,172 @@ $ markdown-doc lint --format sarif
 }
 ```
 
+#### `toc` - Table of Contents Synchronization
+
+Manages table-of-contents (TOC) blocks between `<!-- toc -->` and `<!-- tocstop -->` markers, ensuring they reflect the current document structure.
+
+```console
+# Check if TOC blocks are in sync (default mode)
+$ markdown-doc toc --check
+
+# Update TOC blocks in place
+$ markdown-doc toc --update
+
+# Preview changes with unified diffs
+$ markdown-doc toc --diff
+
+# Target specific files or directories
+$ markdown-doc toc --path docs/ --update
+
+# Check only staged files (pre-commit workflow)
+$ markdown-doc toc --staged --check
+
+# Ignore .markdown-doc-ignore filtering
+$ markdown-doc toc --no-ignore --check
+```
+
+**Operation modes:**
+- `--check` (default): Report files with out-of-sync or missing TOC markers; no modifications
+- `--update`: Rewrite TOC blocks in place with current headings
+- `--diff`: Show unified diffs of what would change without writing
+
+**Output examples:**
+```console
+# Check mode (files with issues)
+❌ docs/guide.md missing TOC markers
+❌ README.md TOC out of sync
+
+# No issues found
+✅ 15 files validated, all TOCs in sync
+
+# Diff mode (shows changes)
+--- docs/guide.md
++++ docs/guide.md
+@@ -5,7 +5,8 @@
+ <!-- toc -->
+ - [Overview](#overview)
+ - [Installation](#installation)
++- [Configuration](#configuration)
+ <!-- tocstop -->
+```
+
+**Configuration:**
+
+TOC markers are configurable in `.markdown-doc.toml`:
+```toml
+[lint]
+toc_start_marker = "<!-- toc -->"
+toc_end_marker = "<!-- tocstop -->"
+```
+
+**Exit codes:**
+- `0`: All TOCs in sync (or update succeeded)
+- `1`: Out-of-sync TOCs found (check mode) or update failed
+
+**Ignore filtering:**
+
+By default, TOC respects `.markdown-doc-ignore` patterns. Use `--no-ignore` to process all files regardless of ignore rules.
+
+#### `validate` - Template Conformance
+
+Performs deep structural checks using schema definitions to ensure documents match required sections, heading hierarchy, and depth constraints.
+
+```console
+# Validate all documentation against configured schemas
+$ markdown-doc validate
+
+# Validate a specific file
+$ markdown-doc validate --path docs/work-packages/20251025_markdown_doc_toolkit/package.md
+
+# Force a schema by name
+$ markdown-doc validate --schema agents AGENTS.md
+
+# Emit machine-readable output
+$ markdown-doc validate --format json
+
+# Suppress success output, only show errors
+$ markdown-doc validate --quiet
+
+# Bypass .markdown-doc-ignore filtering
+$ markdown-doc validate --no-ignore
+
+# Check only staged files
+$ markdown-doc validate --staged
+```
+
+**Output formats:**
+- `--format plain` (default): Human-readable violations per file with schema names
+- `--format json`: Structured findings for programmatic processing
+
+**JSON schema:**
+```json
+{
+  "summary": {
+    "files_scanned": 42,
+    "errors": 3
+  },
+  "findings": [
+    {
+      "schema": "readme",
+      "file": "docs/api/README.md",
+      "line": 0,
+      "message": "Missing required section: 'Usage'"
+    },
+    {
+      "schema": "default",
+      "file": "docs/guide.md",
+      "line": 15,
+      "message": "Heading depth exceeds maximum (found 5, max 4)"
+    }
+  ]
+}
+```
+
+**Common error messages:**
+- `Missing required section: '<section>'` - Document lacks a required heading
+- `Schema '<name>' not found in configuration` - Requested schema doesn't exist
+- `Heading depth exceeds maximum (found X, max Y)` - Document violates depth constraint
+- `Empty section not allowed: '<section>'` - Required section has no content
+- `Top-level heading required but not found` - Schema requires H1, document starts with H2+
+
+**Schema configuration example:**
+
+Define schemas in `.markdown-doc.toml` to enforce document structure:
+
+```toml
+# Default schema applied to all files unless overridden
+[schemas.default]
+required_sections = ["Overview", "Details"]
+allow_additional = true
+allow_empty = false
+max_heading_depth = 4
+
+# Schema for README files
+[schemas.readme]
+patterns = ["**/README.md", "**/readme.md"]
+required_sections = ["Overview", "Installation", "Usage"]
+require_top_level_heading = true
+allow_additional = true
+max_heading_depth = 3
+
+# Schema for agent documentation
+[schemas.agents]
+patterns = ["**/AGENTS.md"]
+required_sections = ["Architecture", "Workflows", "Testing"]
+allow_additional = true
+allow_empty = false
+```
+
+**Exit codes:**
+- `0`: All files conform to their schemas
+- `1`: Validation errors were found
+- `2`: Requested schema (`--schema`) was not found
+- `3`: Configuration or runtime error occurred during validation
+
+**Ignore filtering:**
+
+By default, validate respects `.markdown-doc-ignore` patterns. Use `--no-ignore` to validate all files, and `--quiet` to suppress output when all checks pass.
+
 ### Configuration
 
 `markdown-doc` uses a cascading configuration system with the following precedence (highest to lowest):
@@ -528,6 +694,17 @@ rules = ["broken-links"]
 [[lint.ignore]]
 path = "CHANGELOG.md"
 rules = ["heading-hierarchy"]
+
+[schemas.default]
+required_sections = ["Overview", "Details"]
+allow_additional = true
+allow_empty = false
+
+[schemas.readme]
+patterns = ["**/README.md"]
+required_sections = ["Overview", "Usage"]
+allow_additional = true
+require_top_level_heading = true
 ```
 
 **Configuration reference:**
@@ -547,6 +724,14 @@ rules = ["heading-hierarchy"]
 | `lint.severity` | `<rule>` | `error`/`warning`/`ignore` | `error` | Override rule severity |
 | `lint.ignore` | `path` | glob | (required) | Pattern to ignore |
 | `lint.ignore` | `rules` | string[] | (required) | Rules to disable for pattern |
+| `schemas.<name>` | `patterns` | glob[] | `[]` | Paths matching the schema (empty applies only when explicitly selected) |
+| `schemas.<name>` | `required_sections` | string[] | `[]` | Ordered list of required heading titles |
+| `schemas.<name>` | `allow_additional` | bool | `true` | Allow headings beyond the required list |
+| `schemas.<name>` | `allow_empty` | bool | `false` | Permit empty documents |
+| `schemas.<name>` | `min_sections` | int | (none) | Minimum number of sections required |
+| `schemas.<name>` | `min_heading_level` | int (1-6) | (none) | Minimum heading depth allowed |
+| `schemas.<name>` | `max_heading_level` | int (1-6) | (none) | Maximum heading depth allowed |
+| `schemas.<name>` | `require_top_level_heading` | bool | `true` (default schema) | Require at least one depth-1 heading |
 
 ### Available Lint Rules
 
@@ -556,7 +741,7 @@ rules = ["heading-hierarchy"]
 | `broken-anchors` | Verifies heading anchors in links exist (intra- and inter-file) | ✅ Available |
 | `duplicate-anchors` | Flags duplicate heading IDs in same file | ✅ Available |
 | `heading-hierarchy` | Ensures heading levels don't skip (e.g., H1→H3) and respects max depth | ✅ Available |
-| `required-sections` | Enforces presence of schema-defined sections *(requires schema matcher, pending)* | ⚠️ Stub |
+| `required-sections` | Enforces presence and order of schema-defined sections | ✅ Available |
 | `toc-sync` | Validates declared TOC blocks match heading structure | ✅ Available |
 
 ### Integration Examples

@@ -3,7 +3,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use markdown_doc_config::{
-    Config, ConfigError, ConfigSourceKind, LintRule, LoadOptions, Pattern, SeverityLevel,
+    Config, ConfigError, ConfigSourceKind, LintIgnoreRules, LintRule, LoadOptions, Pattern,
+    SeverityLevel,
 };
 use tempfile::TempDir;
 
@@ -54,6 +55,16 @@ fn loads_defaults_when_no_files_present() {
     assert!(config.lint.ignore.is_empty());
     assert_eq!(config.lint.toc.start_marker, "<!-- toc -->");
     assert_eq!(config.lint.toc.end_marker, "<!-- tocstop -->");
+    assert_eq!(config.schemas.default_schema, "default");
+    assert!(config.schemas.patterns.is_empty());
+    let default_schema = config
+        .schemas
+        .schemas
+        .get("default")
+        .expect("default schema");
+    assert!(default_schema.required_sections.is_empty());
+    assert!(default_schema.allow_additional);
+    assert!(!default_schema.allow_empty);
 
     assert_eq!(config.sources.layers.len(), 1);
     assert_eq!(config.sources.layers[0].kind, ConfigSourceKind::Default);
@@ -85,6 +96,14 @@ fn applies_precedence_and_merges_fields() {
         [[lint.ignore]]
         path = "docs/vendor/**"
         rules = ["broken-links"]
+
+        [schemas.default]
+        required_sections = ["Intro"]
+
+        [schemas.guide]
+        patterns = ["docs/**"]
+        required_sections = ["Overview"]
+        allow_additional = true
         "#,
     );
 
@@ -111,6 +130,9 @@ fn applies_precedence_and_merges_fields() {
         [[lint.ignore]]
         path = "docs/tmp/**"
         rules = ["duplicate-anchors"]
+
+        [schemas.guide]
+        allow_additional = false
         "#,
     );
 
@@ -163,6 +185,20 @@ fn applies_precedence_and_merges_fields() {
         config.lint.severity.get(&LintRule::HeadingHierarchy),
         Some(&SeverityLevel::Warning)
     );
+
+    assert_eq!(config.schemas.default_schema, "default");
+    let schema_settings = &config.schemas;
+    let default_schema = schema_settings
+        .schemas
+        .get("default")
+        .expect("default schema");
+    assert_eq!(default_schema.required_sections, vec!["Intro".to_string()]);
+    let guide_schema = schema_settings.schemas.get("guide").expect("guide schema");
+    assert!(!guide_schema.allow_additional);
+    assert_eq!(guide_schema.required_sections, vec!["Overview".to_string()]);
+    assert_eq!(schema_settings.patterns.len(), 1);
+    assert_eq!(schema_settings.patterns[0].schema, "guide");
+    assert_eq!(schema_settings.patterns[0].matcher.original(), "docs/**");
 
     assert_eq!(config.lint.ignore.len(), 2);
     assert_eq!(
@@ -266,4 +302,80 @@ fn ignore_entries_require_rules() {
         }
         other => panic!("unexpected error: {other}"),
     }
+}
+
+#[test]
+fn severity_overrides_and_wildcard_resolution() {
+    let temp = TempDir::new().expect("tempdir");
+    let working_dir = canonical(temp.path());
+    write_file(
+        working_dir.join(".markdown-doc.toml"),
+        r#"
+        [lint]
+        rules = ["broken-links"]
+
+        [lint.severity]
+        "*" = "warning"
+
+        [[lint.ignore]]
+        path = "generated/**"
+        rules = ["*"]
+
+        [[lint.severity_overrides]]
+        path = "docs/**"
+        [lint.severity_overrides.rules]
+        "*" = "warning"
+        broken-links = "error"
+
+        [[lint.severity_overrides]]
+        path = "legacy/**"
+        [lint.severity_overrides.rules]
+        "*" = "ignore"
+
+        [[lint.severity_overrides]]
+        path = "docs/**"
+        [lint.severity_overrides.rules]
+        broken-links = "error"
+
+        "#,
+    );
+
+    let config =
+        Config::load(LoadOptions::default().with_working_dir(&working_dir)).expect("load config");
+
+    assert_eq!(
+        config.lint.severity_wildcard,
+        Some(SeverityLevel::Warning),
+        "global wildcard severity should be recorded",
+    );
+
+    let ignore_entry = config.lint.ignore.first().expect("ignore entry present");
+    assert!(matches!(ignore_entry.rules, LintIgnoreRules::All));
+
+    assert_eq!(
+        config.lint.severity_for(LintRule::BrokenLinks),
+        SeverityLevel::Warning,
+        "base severity should fall back to wildcard",
+    );
+
+    assert_eq!(
+        config
+            .lint
+            .severity_for_path(Path::new("docs/readme.md"), LintRule::BrokenLinks),
+        SeverityLevel::Error,
+        "docs override should elevate severity",
+    );
+
+    assert_eq!(
+        config
+            .lint
+            .severity_for_path(Path::new("legacy/reference.md"), LintRule::BrokenLinks),
+        SeverityLevel::Ignore,
+        "legacy override should suppress the rule",
+    );
+
+    assert!(
+        config.lint.is_rule_enabled(LintRule::BrokenLinks),
+        "rule remains enabled because at least one path requires it",
+    );
 }

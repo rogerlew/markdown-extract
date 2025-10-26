@@ -220,3 +220,11 @@ Developer Notes
 - Catalog default output is `DOC_CATALOG.md`; JSON available via `--format json`.
 - Broken-links lint honors severity overrides and ignore globs; SARIF output supports CI ingestion.
 - Benchmark target defaults to `tests/markdown-doc/wepppy`; override with `--path` when profiling other trees.
+
+Phase 2 – TOC Command & Severity (Agent 7)
+------------------------------------------
+- Prompt refreshed with current implementation snapshot and explicit deliverables (`docs/work-packages/20251025_markdown_doc_toolkit/prompts/active/agent7_phase2_toc_severity.md`).
+- Workspace tests currently fail because `load_ignore_filter` calls `GitignoreBuilder::add(&path).is_err()`; the API now returns `Result` (`crates/markdown-doc-ops/src/lib.rs:409`).
+- `toc::locate_block` triggers unused-assignment warnings at EOF and needs tighter marker handling before publishing (`crates/markdown-doc-ops/src/toc.rs:75`).
+- TOC command lacks end-to-end coverage for diff/update flows, newline preservation, and `.markdown-doc-ignore`/`--no-ignore` CLI combinations; extend tests in `crates/markdown-doc-ops/tests/toc.rs` and add new fixtures.
+- README and `docs/markdown-doc/README.md` need TOC/ignore/severity documentation, plus tracker entry for Agent 7 once work completes.

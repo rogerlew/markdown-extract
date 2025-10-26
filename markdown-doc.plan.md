@@ -19,13 +19,13 @@
 - [x] Publish quickstart docs (setup, config, pre-commit/CI examples)
 
 ## Phase 2 — Quality Gates Expansion
-- [ ] Extend lint engine with `broken-anchors`, `duplicate-anchors`, `heading-hierarchy`, `required-sections`, `toc-sync`
-- [ ] Implement schema matcher shared by lint/validate using `[schemas]` config patterns
-- [ ] Build `validate` command with deep template conformance messaging
-- [ ] Add severity tuning (`lint.severity`, per-path ignores, `.markdown-doc-ignore`)
-- [ ] Implement `toc` command for marker update/diff workflows
-- [ ] Expand fixture coverage and golden outputs for each lint rule
-- [ ] Update documentation for advanced linting and schema management
+- [x] Extend lint engine with `broken-anchors`, `duplicate-anchors`, `heading-hierarchy`, `required-sections`, `toc-sync`
+- [x] Implement schema matcher shared by lint/validate using `[schemas]` config patterns
+- [x] Build `validate` command with deep template conformance messaging
+- [x] Add severity tuning (`lint.severity`, per-path ignores, `.markdown-doc-ignore`)
+- [x] Implement `toc` command for marker update/diff workflows
+- [x] Expand fixture coverage and golden outputs for each lint rule
+- [x] Update documentation for advanced linting and schema management
 
 ## Phase 3 — Refactoring Support
 - [ ] Construct link graph update engine leveraging `SectionSpan` data

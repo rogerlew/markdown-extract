@@ -359,6 +359,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "ignore"
+version = "0.4.24"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "81776e6f9464432afcc28d03e52eb101c93b6f0566f52aef2427663e700f0403"
+dependencies = [
+ "crossbeam-deque",
+ "globset",
+ "log",
+ "memchr",
+ "regex-automata",
+ "same-file",
+ "walkdir",
+ "winapi-util",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -469,14 +485,17 @@ name = "markdown-doc-ops"
 version = "0.1.0"
 dependencies = [
  "globset",
+ "ignore",
  "markdown-doc-config",
  "markdown-doc-format",
  "markdown-doc-parser",
+ "markdown-doc-test-support",
  "markdown-doc-utils",
  "percent-encoding",
  "pulldown-cmark",
  "rayon",
  "serde_json",
+ "similar",
  "strsim",
  "tempfile",
  "thiserror",

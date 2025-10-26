@@ -82,3 +82,107 @@ fn lint_broken_links_reports_errors() {
         .failure()
         .stdout(predicate::str::contains("Broken link to 'missing.md'"));
 }
+
+#[test]
+fn validate_reports_missing_section() {
+    let temp = TempDir::new().expect("tempdir");
+    setup_file(
+        temp.path(),
+        ".markdown-doc.toml",
+        r#"
+        [schemas.default]
+        required_sections = ["Overview"]
+        "#,
+    );
+    setup_file(temp.path(), "docs/sample.md", "# Title\n");
+
+    let mut cmd = Command::cargo_bin("markdown-doc").expect("binary");
+    let assert = cmd
+        .current_dir(temp.path())
+        .args(["validate", "--path", "docs/sample.md"])
+        .assert()
+        .failure()
+        .code(1);
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).expect("stdout utf8");
+    assert!(stdout.contains("Missing required section 'Overview'"));
+}
+
+#[test]
+fn validate_schema_not_found_returns_exit_code_two() {
+    let temp = TempDir::new().expect("tempdir");
+    setup_file(
+        temp.path(),
+        ".markdown-doc.toml",
+        r#"
+        [schemas.default]
+        required_sections = []
+        "#,
+    );
+    setup_file(temp.path(), "doc.md", "# Overview\n");
+
+    let mut cmd = Command::cargo_bin("markdown-doc").expect("binary");
+    cmd.current_dir(temp.path())
+        .args(["validate", "--schema", "missing"])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains("schema 'missing' not found"));
+}
+
+#[test]
+fn toc_check_reports_outdated_block() {
+    let temp = TempDir::new().expect("tempdir");
+    setup_file(
+        temp.path(),
+        "README.md",
+        "<!-- toc -->\n- [Old](#old)\n<!-- tocstop -->\n\n# Title\n\n## Details\n",
+    );
+
+    let mut cmd = Command::cargo_bin("markdown-doc").expect("binary");
+    cmd.current_dir(temp.path())
+        .args(["toc", "--path", "README.md", "--check"])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("requires TOC update"));
+}
+
+#[test]
+fn toc_update_rewrites_block() {
+    let temp = TempDir::new().expect("tempdir");
+    setup_file(
+        temp.path(),
+        "README.md",
+        "<!-- toc -->\n- [Old](#old)\n<!-- tocstop -->\n\n# Title\n\n## Details\n\n### Nested\n",
+    );
+
+    let mut cmd = Command::cargo_bin("markdown-doc").expect("binary");
+    cmd.current_dir(temp.path())
+        .args(["toc", "--path", "README.md", "--update"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("updated README.md"));
+
+    let rewritten = fs::read_to_string(temp.path().join("README.md")).expect("read file");
+    assert!(rewritten.contains("- [Details](#details)"));
+    assert!(rewritten.contains("  - [Nested](#nested)"));
+    assert!(!rewritten.contains("Old"));
+}
+
+#[test]
+fn toc_diff_outputs_unified_diff() {
+    let temp = TempDir::new().expect("tempdir");
+    setup_file(
+        temp.path(),
+        "doc.md",
+        "<!-- toc -->\n- [Old](#old)\n<!-- tocstop -->\n\n## Details\n",
+    );
+
+    let mut cmd = Command::cargo_bin("markdown-doc").expect("binary");
+    cmd.current_dir(temp.path())
+        .args(["toc", "--path", "doc.md", "--diff"])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("--- a/doc.md"))
+        .stdout(predicate::str::contains("- [Old](#old)"))
+        .stdout(predicate::str::contains("+- [Details](#details)"));
+}

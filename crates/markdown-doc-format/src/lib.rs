@@ -24,6 +24,13 @@ pub enum LintFormat {
     Sarif,
 }
 
+/// Supported validate output formats.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ValidateFormat {
+    Plain,
+    Json,
+}
+
 /// Lightweight heading summary for catalog rendering.
 #[derive(Clone, Debug)]
 pub struct HeadingSummary {
@@ -63,6 +70,23 @@ pub struct LintRenderData {
     pub error_count: usize,
     pub warning_count: usize,
     pub findings: Vec<LintFinding>,
+}
+
+/// Individual validate finding ready for rendering.
+#[derive(Clone, Debug)]
+pub struct ValidateFinding {
+    pub path: PathBuf,
+    pub line: usize,
+    pub message: String,
+    pub schema: String,
+}
+
+/// Aggregated validate render data.
+#[derive(Clone, Debug)]
+pub struct ValidateRenderData {
+    pub files_scanned: usize,
+    pub error_count: usize,
+    pub findings: Vec<ValidateFinding>,
 }
 
 /// Public renderer that transforms operation outputs into user-facing strings.
@@ -387,6 +411,81 @@ impl Renderer {
         };
 
         serde_json::to_string_pretty(&sarif)
+    }
+
+    /// Render validate results in plain-text format.
+    pub fn render_validate_plain(&self, report: &ValidateRenderData) -> String {
+        let mut output = String::new();
+
+        for finding in &report.findings {
+            let marker = "❌";
+            let path = normalize_path_display(&finding.path);
+            let line_str = if finding.line == 0 {
+                "-".to_string()
+            } else {
+                finding.line.to_string()
+            };
+
+            output.push_str(&format!(
+                "{} {}:{} [{}] {}\n",
+                marker, path, line_str, finding.schema, finding.message
+            ));
+        }
+
+        if !report.findings.is_empty() {
+            output.push('\n');
+        }
+
+        output.push_str(&format!(
+            "✅ {} files validated, {} errors\n",
+            report.files_scanned, report.error_count
+        ));
+
+        output
+    }
+
+    /// Render validate results as JSON.
+    pub fn render_validate_json(&self, report: &ValidateRenderData) -> serde_json::Result<String> {
+        #[derive(Serialize)]
+        struct Summary {
+            files_scanned: usize,
+            errors: usize,
+        }
+
+        #[derive(Serialize)]
+        struct JsonFinding<'a> {
+            schema: &'a str,
+            file: String,
+            line: usize,
+            message: &'a str,
+        }
+
+        #[derive(Serialize)]
+        struct ValidateJson<'a> {
+            summary: Summary,
+            findings: Vec<JsonFinding<'a>>,
+        }
+
+        let findings = report
+            .findings
+            .iter()
+            .map(|finding| JsonFinding {
+                schema: finding.schema.as_str(),
+                file: normalize_path_display(&finding.path).into_owned(),
+                line: finding.line,
+                message: finding.message.as_str(),
+            })
+            .collect();
+
+        let json = ValidateJson {
+            summary: Summary {
+                files_scanned: report.files_scanned,
+                errors: report.error_count,
+            },
+            findings,
+        };
+
+        serde_json::to_string_pretty(&json)
     }
 }
 

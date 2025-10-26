@@ -1,0 +1,3 @@
+[schemas.default]
+required_sections = ["Overview", "Details"]
+allow_additional = true

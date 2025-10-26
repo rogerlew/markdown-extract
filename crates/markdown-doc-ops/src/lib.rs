@@ -1,6 +1,10 @@
 //! High-level operations shared by markdown-doc commands.
 
+mod anchors;
+mod lines;
 mod lint;
+mod schema;
+mod toc;
 
 use std::ffi::OsStr;
 use std::io;
@@ -8,22 +12,28 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::SystemTime;
 
+use ignore::gitignore::Gitignore;
 use markdown_doc_config::Config;
 use markdown_doc_format::{
     CatalogEntry, CatalogFormat, CatalogRenderData, HeadingSummary, LintFormat, LintRenderData,
-    Renderer,
+    Renderer, ValidateFinding, ValidateFormat, ValidateRenderData,
 };
 use markdown_doc_parser::{DocumentSection, ParserContext};
 use markdown_doc_utils::atomic_write;
 use rayon::prelude::*;
+use similar::TextDiff;
 use thiserror::Error;
 use walkdir::WalkDir;
+
+use crate::schema::SchemaEngine;
 
 /// Primary entry point for catalog and lint operations.
 pub struct Operations {
     config: Config,
     parser: ParserContext,
     renderer: Renderer,
+    schema_engine: SchemaEngine,
+    ignore_filter: Option<Gitignore>,
 }
 
 impl Operations {
@@ -31,10 +41,14 @@ impl Operations {
     pub fn new(config: Config) -> Self {
         let parser = ParserContext::new(config.clone());
         let renderer = Renderer::from_config(config.clone());
+        let schema_engine = SchemaEngine::new(&config.schemas);
+        let ignore_filter = load_ignore_filter(&config.project.root);
         Self {
             config,
             parser,
             renderer,
+            schema_engine,
+            ignore_filter,
         }
     }
 
@@ -87,14 +101,13 @@ impl Operations {
     /// Execute configured lint rules and return a renderable report plus exit code.
     pub fn lint(&self, options: LintOptions) -> Result<LintOutcome, OperationError> {
         let targets = self.collect_targets(&options.scan)?;
-        let schema_provider = NoopSchemaProvider;
 
         let result = lint::run(lint::LintRunInput {
             config: &self.config,
             parser: &self.parser,
             targets: &targets,
             root: &self.config.project.root,
-            schema_provider: &schema_provider,
+            schema_engine: &self.schema_engine,
         })?;
 
         let report = LintRenderData {
@@ -117,6 +130,194 @@ impl Operations {
     /// Temporary wrapper retaining the legacy method name for compatibility.
     pub fn lint_broken_links(&self, options: LintOptions) -> Result<LintOutcome, OperationError> {
         self.lint(options)
+    }
+
+    /// Execute schema validation across the selected targets.
+    pub fn validate(&self, options: ValidateOptions) -> Result<ValidateOutcome, OperationError> {
+        let targets = self.collect_targets(&options.scan)?;
+
+        let schema_override = match &options.schema {
+            Some(name) => Some(
+                self.schema_engine
+                    .schema_by_name(name)
+                    .ok_or_else(|| OperationError::SchemaNotFound { name: name.clone() })?,
+            ),
+            None => None,
+        };
+
+        let mut findings = Vec::new();
+
+        for path in &targets {
+            let absolute = self.config.project.root.join(path);
+            let contents =
+                std::fs::read_to_string(&absolute).map_err(|source| OperationError::Io {
+                    path: absolute,
+                    source,
+                })?;
+
+            let line_offsets = lines::compute_line_offsets(&contents);
+            let sections = self.parser.sections_from_str(path, &contents);
+
+            let schema = schema_override
+                .as_ref()
+                .cloned()
+                .unwrap_or_else(|| self.schema_engine.schema_for_path(path));
+
+            let check = self
+                .schema_engine
+                .check(schema.clone(), &sections, &line_offsets);
+
+            for violation in check.violations {
+                findings.push(ValidateFinding {
+                    path: path.clone(),
+                    line: violation.line,
+                    message: violation.message,
+                    schema: schema.name().to_string(),
+                });
+            }
+        }
+
+        let error_count = findings.len();
+        let report = ValidateRenderData {
+            files_scanned: targets.len(),
+            error_count,
+            findings,
+        };
+
+        let rendered = if options.quiet && error_count == 0 {
+            String::new()
+        } else {
+            match options.format {
+                ValidateFormat::Plain => self.renderer.render_validate_plain(&report),
+                ValidateFormat::Json => self.renderer.render_validate_json(&report)?,
+            }
+        };
+
+        let exit_code = if error_count > 0 { 1 } else { 0 };
+
+        Ok(ValidateOutcome {
+            rendered,
+            report,
+            exit_code,
+        })
+    }
+
+    /// Synchronise TOC blocks against live heading structure.
+    pub fn toc(&self, options: TocOptions) -> Result<TocOutcome, OperationError> {
+        let targets = self.collect_targets(&options.scan)?;
+
+        let mut changes = Vec::new();
+        let mut messages = Vec::new();
+        let mut requires_update = false;
+        let mut encountered_error = false;
+
+        for path in targets {
+            let absolute = self.config.project.root.join(&path);
+            let contents =
+                std::fs::read_to_string(&absolute).map_err(|source| OperationError::Io {
+                    path: absolute.clone(),
+                    source,
+                })?;
+
+            let sections = self.parser.sections_from_str(&path, &contents);
+            let block = match toc::locate_block(&contents, &self.config.lint.toc) {
+                Some(block) => block,
+                None => {
+                    encountered_error = true;
+                    changes.push(TocChange {
+                        path: path.clone(),
+                        status: TocStatus::MissingMarkers,
+                        diff: None,
+                    });
+                    messages.push(format!("❌ {} missing TOC markers", path.display()));
+                    continue;
+                }
+            };
+
+            let generated_items = toc::generate_items(&sections);
+            let existing_body = contents[block.start_offset..block.end_offset].to_string();
+            let line_sep = if existing_body.contains("\r\n") {
+                "\r\n"
+            } else if contents.contains("\r\n") {
+                "\r\n"
+            } else {
+                "\n"
+            };
+            let rendered_body = toc::render_items_with_separator(&generated_items, line_sep);
+
+            if existing_body == rendered_body {
+                changes.push(TocChange {
+                    path: path.clone(),
+                    status: TocStatus::UpToDate,
+                    diff: None,
+                });
+                continue;
+            }
+
+            match options.mode {
+                TocMode::Check => {
+                    requires_update = true;
+                    changes.push(TocChange {
+                        path: path.clone(),
+                        status: TocStatus::NeedsUpdate,
+                        diff: None,
+                    });
+                    messages.push(format!("❌ {} requires TOC update", path.display()));
+                }
+                TocMode::Diff => {
+                    requires_update = true;
+                    let diff = build_diff(&path, &existing_body, &rendered_body);
+                    changes.push(TocChange {
+                        path: path.clone(),
+                        status: TocStatus::NeedsUpdate,
+                        diff: Some(diff.clone()),
+                    });
+                    messages.push(diff);
+                }
+                TocMode::Update => {
+                    let mut updated = String::new();
+                    updated.push_str(&contents[..block.start_offset]);
+                    updated.push_str(&rendered_body);
+                    updated.push_str(&contents[block.end_offset..]);
+                    atomic_write(&absolute, &updated)?;
+                    changes.push(TocChange {
+                        path: path.clone(),
+                        status: TocStatus::Updated,
+                        diff: None,
+                    });
+                    messages.push(format!("✏️  updated {}", path.display()));
+                }
+            }
+        }
+
+        let exit_code = match options.mode {
+            TocMode::Update => {
+                if encountered_error {
+                    1
+                } else {
+                    0
+                }
+            }
+            TocMode::Check | TocMode::Diff => {
+                if requires_update || encountered_error {
+                    1
+                } else {
+                    0
+                }
+            }
+        };
+
+        let rendered = if options.quiet && messages.is_empty() {
+            String::new()
+        } else {
+            messages.join("\n")
+        };
+
+        Ok(TocOutcome {
+            rendered,
+            changes,
+            exit_code,
+        })
     }
 
     fn render_lint(
@@ -148,6 +349,18 @@ impl Operations {
         };
 
         candidates.retain(|path| self.parser.is_path_in_scope(path));
+
+        if options.respect_ignore {
+            if let Some(filter) = &self.ignore_filter {
+                let root = &self.config.project.root;
+                candidates.retain(|path| {
+                    let absolute = root.join(path);
+                    !filter
+                        .matched_path_or_any_parents(&absolute, false)
+                        .is_ignore()
+                });
+            }
+        }
         candidates.sort();
         candidates.dedup();
         Ok(candidates)
@@ -190,6 +403,19 @@ impl Operations {
         } else {
             self.config.project.root.join(path)
         }
+    }
+}
+
+fn load_ignore_filter(root: &Path) -> Option<Gitignore> {
+    let ignore_path = root.join(".markdown-doc-ignore");
+    if !ignore_path.exists() {
+        return None;
+    }
+    let (filter, error) = Gitignore::new(ignore_path);
+    if error.is_some() {
+        None
+    } else {
+        Some(filter)
     }
 }
 
@@ -258,6 +484,21 @@ fn collect_from_paths(root: &Path, paths: &[PathBuf]) -> Result<Vec<PathBuf>, Op
     Ok(results)
 }
 
+fn build_diff(path: &Path, before: &str, after: &str) -> String {
+    let old_header = format!("a/{}", path.display());
+    let new_header = format!("b/{}", path.display());
+    let diff = TextDiff::from_lines(before, after)
+        .unified_diff()
+        .context_radius(3)
+        .header(&old_header, &new_header)
+        .to_string();
+    if diff.ends_with('\n') {
+        diff
+    } else {
+        format!("{}\n", diff)
+    }
+}
+
 fn filter_paths(files: Vec<PathBuf>, filters: &[PathBuf], root: &Path) -> Vec<PathBuf> {
     if filters.is_empty() {
         files
@@ -313,10 +554,6 @@ fn normalize_relative_path(path: &Path) -> PathBuf {
     }
 }
 
-struct NoopSchemaProvider;
-
-impl lint::SchemaProvider for NoopSchemaProvider {}
-
 fn is_markdown_path(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
     lower.ends_with(".md") || lower.ends_with(".markdown")
@@ -336,11 +573,29 @@ pub struct LintOptions {
     pub format: LintFormat,
 }
 
+/// Validate execution options.
+pub struct ValidateOptions {
+    pub scan: ScanOptions,
+    pub format: ValidateFormat,
+    pub schema: Option<String>,
+    pub quiet: bool,
+}
+
 /// File scanning configuration shared by catalog and lint.
-#[derive(Default)]
 pub struct ScanOptions {
     pub paths: Vec<PathBuf>,
     pub staged: bool,
+    pub respect_ignore: bool,
+}
+
+impl Default for ScanOptions {
+    fn default() -> Self {
+        ScanOptions {
+            paths: Vec::new(),
+            staged: false,
+            respect_ignore: true,
+        }
+    }
 }
 
 /// Catalog execution result.
@@ -355,6 +610,51 @@ pub struct LintOutcome {
     pub rendered: String,
     pub report: LintRenderData,
     pub exit_code: i32,
+}
+
+/// Validate execution result containing rendered output and exit code.
+pub struct ValidateOutcome {
+    pub rendered: String,
+    pub report: ValidateRenderData,
+    pub exit_code: i32,
+}
+
+/// Options for the TOC command.
+pub struct TocOptions {
+    pub scan: ScanOptions,
+    pub mode: TocMode,
+    pub quiet: bool,
+}
+
+/// Execution result for TOC synchronisation.
+pub struct TocOutcome {
+    pub rendered: String,
+    pub changes: Vec<TocChange>,
+    pub exit_code: i32,
+}
+
+/// Individual file change surfaced by the TOC command.
+pub struct TocChange {
+    pub path: PathBuf,
+    pub status: TocStatus,
+    pub diff: Option<String>,
+}
+
+/// Mode selection for TOC execution.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TocMode {
+    Check,
+    Update,
+    Diff,
+}
+
+/// Status classification for TOC outcomes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TocStatus {
+    UpToDate,
+    NeedsUpdate,
+    Updated,
+    MissingMarkers,
 }
 
 /// Errors surfaced while running operations.
@@ -372,6 +672,8 @@ pub enum OperationError {
         source: io::Error,
         message: String,
     },
+    #[error("schema '{name}' not found")]
+    SchemaNotFound { name: String },
     #[error("{0}")]
     Other(String),
 }
