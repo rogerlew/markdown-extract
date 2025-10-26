@@ -51,4 +51,4 @@
 ## Immediate Next Steps
 - [x] Confirm crate layout and scaffolding approach with stakeholders
 - [x] Kick off Phase 1 tasks (config resolver, parser, catalog, lint)
-- [ ] Prepare shared fixtures/bench harness and assign implementation agents
+- [x] Prepare shared fixtures/bench harness and assign implementation agents

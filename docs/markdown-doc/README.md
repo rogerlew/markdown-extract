@@ -16,6 +16,10 @@ The `markdown-doc` toolkit is composed of a collection of crates that layer resp
 
 Integration tests live under `tests/markdown-doc/` and currently mirror the markdown tree from `/workdir/wepppy`. Regenerate the snapshot with the copy script noted in the Cross-Cutting Foundations plan when upstream documentation changes.
 
+### Fixture Scale
+
+`cloc` (2025-10-25) reports the snapshot contains **734 Markdown files** (797 text files total) comprising **82,695 lines of Markdown code** and **31,385 blank lines**. The benchmark baseline and future profiling expectations assume this corpus size; re-run `cloc` after refreshing the fixtures to keep stats current.
+
 ## Configuration Loading
 
 The `markdown-doc-config` crate resolves configuration using the precedence stack defined in the spec:
@@ -63,6 +67,15 @@ cargo run -p markdown-doc-bench --release -- --path tests/markdown-doc/wepppy
 ```
 
 The workflow uploads `benchmark-results.txt` and writes a summary to the job output so we can track regressions over time.
+
+### Current Baseline (2025-10-25)
+
+Running `cargo run -p markdown-doc-bench --release -- --path tests/markdown-doc/wepppy` on the reference environment (3 iterations, 1 warm-up) yields:
+
+- `catalog`: average **78.09 ms** (median 76.41 ms)
+- `lint-broken-links`: average **76.95 ms** (median 77.87 ms)
+
+Re-run the harness after significant parser or IO changes to keep this baseline up to date.
 
 ## Roadmap
 

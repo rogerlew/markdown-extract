@@ -12,10 +12,10 @@
 ## Task Board
 
 ### Ready / Backlog
-- [ ] Prepare benchmarking harness for catalog/lint performance (**Agent 4**)
+- [ ] Evaluate CI workflow alignment with parent `/workdir/wepppy` pipelines before duplicating jobs (**PM/Agent 4**)
 
 ### In Progress
-- [ ] Awaiting Agent 4 kickoff (CI + benchmarks)
+- [ ] Monitor benchmark baseline; rerun after significant parser/IO changes
 
 ### Blocked
 - [ ] None currently
@@ -25,7 +25,7 @@
 - [x] Flesh out configuration resolver with precedence, defaults, and validation (**Agent 1**, 2025-10-25)
 - [x] Implement markdown parsing layer with enriched spans (**Agent 2**, 2025-10-25)
 - [x] Ship catalog generation + broken-links lint CLI slice (**Agent 3**, 2025-10-25)
-- [x] Establish CI checks and benchmarking harness (**Agent 4**, 2025-10-25)
+- [x] Benchmark harness delivered + baseline captured (**Agent 4**, 2025-10-25)
 
 ## Timeline
 
@@ -172,6 +172,28 @@ cargo test -p markdown-doc-parser
 cargo fmt
 cargo clippy --all-targets --all-features
 cargo test --all
+```
+
+### 2025-10-25: Benchmark harness + baseline
+**Agent/Contributor**: Agent 4 (Codex)
+
+**Work completed**:
+- Delivered `tools/markdown-doc-bench` CLI with configurable warm-up/iteration counts to profile catalog and lint operations.
+- Recorded baseline performance against `tests/markdown-doc/wepppy` fixtures (3 iterations, 1 warm-up) and documented results in `docs/markdown-doc/README.md`.
+- Verified release build timings (~78 ms catalog, ~77 ms lint) to confirm MVP meets <5 s requirement with ample headroom.
+- Captured fixture scale statistics via `cloc` (734 Markdown files, ~82.7k lines) and added them to the documentation for context.
+
+**Blockers encountered**:
+- None (CI workflow integration deferred—underlying project relies on parent `/workdir/wepppy` pipelines).
+
+**Next steps**:
+1. Monitor benchmarks after major parser/IO changes and refresh documentation as needed.
+2. Coordinate with parent project maintainers before adding duplicate CI jobs in this repo.
+3. Feed baseline numbers into future performance regression alerts once CI hooks exist.
+
+**Test results**:
+```bash
+cargo run -p markdown-doc-bench --release -- --path tests/markdown-doc/wepppy
 ```
 
 ### 2025-10-25: CI + Benchmark Harness
