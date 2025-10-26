@@ -96,6 +96,15 @@ The `mv` CLI command layers on top of the refactor engine to provide safe Markdo
 - Dry-run renders unified diffs; real runs perform atomic writes with optional `.bak` backups. Operations roll back on failure using in-memory snapshots.
 - Exit codes align with the toolchain (0 success, 1 validation error, 4 I/O error); JSON mode mirrors the per-file status tuples consumed by agents.
 
+### `markdown-doc refs`
+
+Reference discovery reuses the same link graph metadata without mutating files:
+
+- CLI surface: `markdown-doc refs <PATTERN>` with `--path`, `--staged`, `--format json`, `--anchor-only`, and `--no-ignore`.
+- Patterns support relative paths (with optional glob wildcards) and `#anchor` suffixes. Anchor-only mode matches by slug regardless of path.
+- `Operations::refs` iterates graph entries to locate inline links and reference definitions, returning source path, line number, target path/anchor, and contextual line text.
+- Plain output mirrors the familiar `path:line -> target | snippet` format; JSON emits a stable structure for automation.
+
 ## CI & Benchmarks
 
 Continuous integration now enforces formatting, linting, and tests for every push/PR via `.github/workflows/build_and_test.yml`:

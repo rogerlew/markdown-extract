@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::SystemTime;
 
+use globset::{Glob, GlobSet, GlobSetBuilder};
 use ignore::gitignore::Gitignore;
 use markdown_doc_config::Config;
 use markdown_doc_format::{
@@ -28,6 +29,7 @@ use similar::TextDiff;
 use thiserror::Error;
 use walkdir::WalkDir;
 
+use crate::anchors::normalize_anchor_fragment;
 use crate::paths::normalize_path;
 use crate::refactor::graph::LinkGraph;
 use crate::refactor::rewrite::{plan_file_moves, FileMove, RewriteError};
@@ -328,6 +330,59 @@ impl Operations {
     pub fn link_graph(&self, options: ScanOptions) -> Result<LinkGraph, OperationError> {
         let targets = self.collect_targets(&options)?;
         LinkGraph::build(&self.parser, &self.config.project.root, &targets)
+    }
+
+    /// Locate references to a given Markdown path or anchor.
+    pub fn refs(&self, options: RefsOptions) -> Result<RefsOutcome, OperationError> {
+        let root = &self.config.project.root;
+        let query = ReferenceQuery::new(root, &options.pattern, options.anchor_only)?;
+
+        let targets = self.collect_targets(&options.scan)?;
+        let graph = LinkGraph::build(&self.parser, root, &targets)?;
+
+        let mut matches = Vec::new();
+        for entry in graph.files() {
+            for link in entry.links() {
+                if let Some(target) = &link.target {
+                    if query.matches(target) {
+                        matches.push(RefsMatch {
+                            source: entry.path().to_path_buf(),
+                            line: link.line,
+                            display: entry.line_text(link.line).unwrap_or_default(),
+                            target_path: target.path.clone(),
+                            target_anchor: target.anchor.clone(),
+                        });
+                    }
+                }
+            }
+
+            for definition in entry.definitions() {
+                if let Some(target) = &definition.target {
+                    if query.matches(target) {
+                        matches.push(RefsMatch {
+                            source: entry.path().to_path_buf(),
+                            line: definition.line,
+                            display: entry.line_text(definition.line).unwrap_or_default(),
+                            target_path: target.path.clone(),
+                            target_anchor: target.anchor.clone(),
+                        });
+                    }
+                }
+            }
+        }
+
+        matches.sort_by(|a, b| match a.source.cmp(&b.source) {
+            std::cmp::Ordering::Equal => a.line.cmp(&b.line),
+            other => other,
+        });
+
+        let exit_code = if matches.is_empty() { 1 } else { 0 };
+
+        Ok(RefsOutcome {
+            query: options.pattern,
+            matches,
+            exit_code,
+        })
     }
 
     /// Move/rename a Markdown file while updating inbound/outbound references.
@@ -879,6 +934,144 @@ fn derive_backup_path(path: &Path) -> Option<PathBuf> {
     Some(path.with_file_name(name))
 }
 
+struct ReferenceQuery {
+    path_matcher: Option<PathMatcher>,
+    anchor: Option<String>,
+}
+
+impl ReferenceQuery {
+    fn new(root: &Path, pattern: &str, anchor_only: bool) -> Result<Self, OperationError> {
+        let trimmed = pattern.trim();
+        if trimmed.is_empty() {
+            return Err(OperationError::InvalidInput(
+                "refs pattern cannot be empty".into(),
+            ));
+        }
+
+        let (path_part, anchor_part) = if anchor_only {
+            (None, Some(trimmed))
+        } else if let Some(idx) = trimmed.find('#') {
+            let (path_segment, anchor_segment) = trimmed.split_at(idx);
+            let anchor_segment = &anchor_segment[1..];
+            let anchor_segment = anchor_segment.trim();
+            let path_segment = path_segment.trim();
+            let path_opt = if path_segment.is_empty() {
+                None
+            } else {
+                Some(path_segment)
+            };
+            let anchor_opt = if anchor_segment.is_empty() {
+                None
+            } else {
+                Some(anchor_segment)
+            };
+            (path_opt, anchor_opt)
+        } else if let Some(stripped) = trimmed.strip_prefix('#') {
+            let anchor_segment = stripped.trim();
+            if anchor_segment.is_empty() {
+                return Err(OperationError::InvalidInput(
+                    "anchor query must not be empty".into(),
+                ));
+            }
+            (None, Some(anchor_segment))
+        } else {
+            (Some(trimmed), None)
+        };
+
+        let anchor = anchor_part
+            .map(normalize_anchor_fragment)
+            .filter(|value| !value.is_empty());
+
+        if anchor_only && anchor.is_none() {
+            return Err(OperationError::InvalidInput(
+                "--anchor-only requires a non-empty anchor".into(),
+            ));
+        }
+
+        let path_matcher = if let Some(path_segment) = path_part {
+            Some(PathMatcher::new(root, path_segment)?)
+        } else {
+            None
+        };
+
+        Ok(ReferenceQuery {
+            path_matcher,
+            anchor,
+        })
+    }
+
+    fn matches(&self, target: &crate::refactor::graph::LinkTarget) -> bool {
+        if let Some(expected_anchor) = &self.anchor {
+            match target.anchor.as_ref() {
+                Some(anchor) if anchor == expected_anchor => {}
+                _ => return false,
+            }
+        }
+
+        match (&self.path_matcher, target.path.as_ref()) {
+            (Some(matcher), Some(path)) => matcher.matches(path),
+            (Some(_), None) => false,
+            (None, _) => true,
+        }
+    }
+}
+
+enum PathMatcher {
+    Exact(String),
+    Glob(GlobSet),
+}
+
+impl PathMatcher {
+    fn new(root: &Path, input: &str) -> Result<Self, OperationError> {
+        let cleaned = input.trim();
+        if cleaned.is_empty() {
+            return Err(OperationError::InvalidInput(
+                "path pattern must not be empty".into(),
+            ));
+        }
+
+        if contains_glob_characters(cleaned) {
+            let pattern = cleaned.replace('\\', "/");
+            let mut builder = GlobSetBuilder::new();
+            builder.add(Glob::new(&pattern).map_err(|err| {
+                OperationError::InvalidInput(format!("invalid glob pattern '{pattern}': {err}"))
+            })?);
+            let glob = builder
+                .build()
+                .map_err(|err| OperationError::InvalidInput(err.to_string()))?;
+            Ok(PathMatcher::Glob(glob))
+        } else {
+            let candidate = normalize_path(root.join(cleaned));
+            let relative = candidate.strip_prefix(root).map_err(|_| {
+                OperationError::InvalidInput(format!(
+                    "pattern '{}' resolves outside project root",
+                    input
+                ))
+            })?;
+            Ok(PathMatcher::Exact(path_to_slash(relative)))
+        }
+    }
+
+    fn matches(&self, path: &Path) -> bool {
+        let value = path_to_slash(path);
+        match self {
+            PathMatcher::Exact(expected) => &value == expected,
+            PathMatcher::Glob(glob) => glob.is_match(&value),
+        }
+    }
+}
+
+fn contains_glob_characters(value: &str) -> bool {
+    value.contains('*') || value.contains('?') || value.contains('[')
+}
+
+fn path_to_slash(path: &Path) -> String {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 fn build_catalog_entry(path: &Path, sections: Vec<DocumentSection>) -> CatalogEntry {
     let headings = sections
         .into_iter()
@@ -966,6 +1159,29 @@ pub struct ValidateOutcome {
     pub rendered: String,
     pub report: ValidateRenderData,
     pub exit_code: i32,
+}
+
+/// Options for the refs command.
+pub struct RefsOptions {
+    pub scan: ScanOptions,
+    pub pattern: String,
+    pub anchor_only: bool,
+}
+
+/// Reference lookup result set.
+pub struct RefsOutcome {
+    pub query: String,
+    pub matches: Vec<RefsMatch>,
+    pub exit_code: i32,
+}
+
+/// Individual reference match.
+pub struct RefsMatch {
+    pub source: PathBuf,
+    pub line: usize,
+    pub display: String,
+    pub target_path: Option<PathBuf>,
+    pub target_anchor: Option<String>,
 }
 
 /// Options for the mv command.

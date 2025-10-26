@@ -3,6 +3,13 @@
 ## Objective
 Implement the `markdown-doc refs` command for discovering references to Markdown files/anchors, and build out Phase 3 stress-test fixtures + docs covering refactoring workflows.
 
+## Current Context
+- **Link graph foundation**: `markdown-doc-ops::refactor::graph` (Agent 8) exposes anchors, inline links, reference definitions, and backreferences. `Operations::link_graph` already respects `ScanOptions` (paths, staged, ignore filters).
+- **Rewrite engine in place**: `plan_file_moves` and `Operations::mv` (Agent 9) validate that link graph metadata supports large-scale edits. Reuse these APIs for read-only lookups—avoid reparsing files.
+- **CLI landscape**: `markdown-doc` currently supports `catalog`, `lint`, `validate`, `toc`, and the new `mv`. Follow existing patterns for option wiring, exit code handling, and quiet/json output.
+- **Tests/fixtures**: Ops+CLI rename coverage lives in `crates/markdown-doc-ops/tests/mv.rs`, `crates/markdown-doc-cli/tests/cli.rs`. Complex fixtures under `tests/markdown-doc/` are still lightweight; no dedicated stress corpus yet.
+- **Documentation status**: README and architecture docs now include mv/refactor sections. They’ll need a companion subsection describing `refs` usage once implemented.
+
 ## Responsibilities
 - **`refs` CLI command**
   - Syntax: `markdown-doc refs <PATTERN>` where `<PATTERN>` may be a file path, glob, or anchor (e.g., `docs/guide.md#setup`).
@@ -51,3 +58,4 @@ Implement the `markdown-doc refs` command for discovering references to Markdown
 - Keep command read-only (no file mutations).
 - Ensure performance remains acceptable on WEPPpy-scale repos (reuse cached graph when possible).
 - If new helper APIs are required in the link graph, coordinate with Agent 8’s module (or add there with tests).
+- Maintain exit-code conventions (0 success, 1 no matches, 4 I/O failures, etc.) and run `cargo fmt`, `cargo clippy --all-targets --all-features`, `cargo test --all` before handoff.

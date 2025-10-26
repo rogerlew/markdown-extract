@@ -229,9 +229,10 @@ Phase 2 – TOC Command & Severity (Agent 7)
 - TOC command lacks end-to-end coverage for diff/update flows, newline preservation, and `.markdown-doc-ignore`/`--no-ignore` CLI combinations; extend tests in `crates/markdown-doc-ops/tests/toc.rs` and add new fixtures.
 - README and `docs/markdown-doc/README.md` need TOC/ignore/severity documentation, plus tracker entry for Agent 7 once work completes.
 
-Phase 3 – Link Graph & mv (Agents 8–9)
---------------------------------------
+Phase 3 – Link Graph, mv, refs (Agents 8–10)
+--------------------------------------------
 - **Agent 8 (`docs/work-packages/20251025_markdown_doc_toolkit/prompts/active/agent8_phase3_link_graph.md`)** delivered the link graph core under `markdown-doc-ops::refactor::graph`, exposing anchors, links, and backreferences alongside rewrite planning via `plan_file_moves`. Tests live in `crates/markdown-doc-ops/tests/graph.rs` and `tests/rewrite.rs`.
 - **Agent 9 (`docs/work-packages/20251025_markdown_doc_toolkit/prompts/active/agent9_phase3_mv.md`)** implemented `markdown-doc mv`, wiring CLI + ops to the refactor engine. Supports `--dry-run`, `--force`, `--no-backup`, `--json`, `--quiet`, `--no-ignore`. Tests cover ops (`crates/markdown-doc-ops/tests/mv.rs`) and CLI (`crates/markdown-doc-cli/tests/cli.rs`).
-- README & architecture docs now document mv usage (`README.md`, `docs/markdown-doc/README.md`), and tracker has Agent 8/9 entries (`docs/work-packages/20251025_markdown_doc_toolkit/tracker.md`).
-- Pending follow-ups: directory/batch moves, linker caching, and upcoming `markdown-doc refs` command (Agent 10 prompt).
+- **Agent 10 (`docs/work-packages/20251025_markdown_doc_toolkit/prompts/active/agent10_phase3_refs.md`)** adds `markdown-doc refs`, reference discovery, and stress fixtures under `tests/markdown-doc/refactor/complex/`. Ops tests in `crates/markdown-doc-ops/tests/refs.rs`; CLI coverage appended to `crates/markdown-doc-cli/tests/cli.rs`.
+- README & architecture docs now document mv/refs usage (`README.md`, `docs/markdown-doc/README.md`), and tracker has Agent 8–10 entries (`docs/work-packages/20251025_markdown_doc_toolkit/tracker.md`).
+- Pending follow-ups: directory/batch moves, link graph caching, future `markdown-doc refs` enhancements (globbed anchors) and additional refactor tooling.

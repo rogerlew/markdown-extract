@@ -28,11 +28,11 @@
 - [x] Update documentation for advanced linting and schema management
 
 ## Phase 3 — Refactoring Support
-- [ ] Construct link graph update engine leveraging `SectionSpan` data
-- [ ] Implement `mv` command with dry-run, backups, transactional reference rewrites
-- [ ] Implement `refs` command (file/anchor reference discovery) with JSON output option
-- [ ] Add stress tests for nested directories, mixed link styles, rollback scenarios
-- [ ] Document safe refactoring workflows and `wctl` wrappers
+- [x] Construct link graph update engine leveraging `SectionSpan` data
+- [x] Implement `mv` command with dry-run, backups, transactional reference rewrites
+- [x] Implement `refs` command (file/anchor reference discovery) with JSON output option
+- [x] Add stress tests for nested directories, mixed link styles, rollback scenarios
+- [x] Document safe refactoring workflows and `wctl` wrappers
 
 ## Phase 4 — Intelligence & Automation
 - [ ] Define acceptance criteria for search (latency, ranking, snippets)
@@ -52,5 +52,5 @@
 - [x] Confirm crate layout and scaffolding approach with stakeholders
 - [x] Kick off Phase 1 tasks (config resolver, parser, catalog, lint)
 - [x] Prepare shared fixtures/bench harness and assign implementation agents
-- [ ] Launch Phase 3 refactoring efforts (link graph, mv, refs)
+- [x] Launch Phase 3 refactoring efforts (link graph, mv, refs)
 - [ ] Define CI alignment plan with parent repo (fmt/clippy/test automation)

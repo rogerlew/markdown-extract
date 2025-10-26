@@ -801,11 +801,7 @@ Behaviour notes:
 
 #### Link Graph & Rewrite Utilities
 
-The `markdown-doc mv` and `refs` commands are built on a shared **link graph engine** that tracks all relationships between Markdown files. This foundation enables safe refactoring operations by understanding the complete web of links, anchors, and references in your documentation.
-
-**For library users:** Phase 3 introduces a reusable refactor engine in `markdown-doc-ops::refactor` that higher-level commands (`markdown-doc mv`, `markdown-doc refs`, future rename workflows) can leverage.
-
-**Key capabilities:**
+Phase 3 introduces a reusable refactor engine in `markdown-doc-ops::refactor` that higher-level commands (`markdown-doc mv`, `markdown-doc refs`, future rename workflows) will leverage.
 
 - `Operations::link_graph(ScanOptions)` returns a `LinkGraph` capturing:
   - Anchors with depth, byte ranges, and normalized titles (`anchors_in(path)`).
@@ -835,11 +831,14 @@ let plan = plan_file_moves(
     }],
 )?;
 
-// plan.edits contains TextEdit for each affected file
-// plan.moves contains FileMove entries with output paths
+for edit in &plan.file_edits {
+    println!("{} -> {}", edit.original_path.display(), edit.output_path.display());
+    println!("{}", edit.updated_contents);
+}
 ```
 
-This API supports batch operations, multi-hop reference chains, and anchor-aware rewrites while keeping complexity hidden from CLI consumers.
+Downstream tooling can serialise `RewritePlan` to unified diffs (via `similar::TextDiff`) or apply edits with the existing atomic writer utilities.
+
 ### Configuration
 
 `markdown-doc` uses a cascading configuration system with the following precedence (highest to lowest):

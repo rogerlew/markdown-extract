@@ -198,6 +198,24 @@ impl FileGraphEntry {
     pub fn definitions(&self) -> &[ReferenceDefinition] {
         &self.definitions
     }
+
+    /// Retrieve the raw line text for a 1-based line number.
+    pub fn line_text(&self, line: usize) -> Option<String> {
+        if line == 0 {
+            return None;
+        }
+        let start = *self.line_offsets.get(line.saturating_sub(1))?;
+        let end = if line < self.line_offsets.len() {
+            *self.line_offsets.get(line)?
+        } else {
+            self.contents.len()
+        };
+        if start > self.contents.len() || end > self.contents.len() || start > end {
+            return None;
+        }
+        let slice = &self.contents[start..end];
+        Some(slice.trim_end_matches(&['\r', '\n'][..]).to_string())
+    }
 }
 
 /// Representation of a heading anchor discovered within a file.

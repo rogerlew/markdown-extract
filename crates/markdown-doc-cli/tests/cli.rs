@@ -4,6 +4,7 @@ use std::path::Path;
 
 use assert_cmd::Command;
 use predicates::prelude::*;
+use serde_json::Value;
 use tempfile::TempDir;
 
 fn setup_file(dir: &Path, relative: &str, contents: &str) {
@@ -274,5 +275,84 @@ fn mv_updates_files_and_links() {
     assert!(
         guide.contains("(docs/intro.md#overview)"),
         "guide link should be rewritten"
+    );
+}
+
+#[test]
+fn refs_plain_reports_matches() {
+    let temp = TempDir::new().expect("tempdir");
+    setup_file(
+        temp.path(),
+        ".markdown-doc.toml",
+        r#"
+        [lint]
+        rules = ["broken-links"]
+        "#,
+    );
+    setup_file(
+        temp.path(),
+        "docs/guide.md",
+        "# Guide\n\n## Overview\n\nSee [FAQ](docs/faq.md#top).\n",
+    );
+    setup_file(
+        temp.path(),
+        "docs/faq.md",
+        "# FAQ\n\nLink back to [Guide](guide.md#overview).\n",
+    );
+
+    let mut cmd = Command::cargo_bin("markdown-doc").expect("binary");
+    cmd.current_dir(temp.path())
+        .args(["refs", "docs/guide.md#overview"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("docs/faq.md"));
+}
+
+#[test]
+fn refs_returns_exit_code_one_when_no_matches() {
+    let temp = TempDir::new().expect("tempdir");
+    setup_file(temp.path(), ".markdown-doc.toml", "");
+    setup_file(temp.path(), "doc.md", "# Doc\n\nNo references.\n");
+
+    let mut cmd = Command::cargo_bin("markdown-doc").expect("binary");
+    cmd.current_dir(temp.path())
+        .args(["refs", "missing.md"])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("No references found"));
+}
+
+#[test]
+fn refs_json_outputs_expected_structure() {
+    let temp = TempDir::new().expect("tempdir");
+    setup_file(temp.path(), ".markdown-doc.toml", "");
+    setup_file(
+        temp.path(),
+        "guide.md",
+        "# Guide\n\nSee [Intro](intro.md#overview).\n",
+    );
+    setup_file(temp.path(), "intro.md", "# Intro\n\n## Overview\n");
+
+    let mut cmd = Command::cargo_bin("markdown-doc").expect("binary");
+    let output = cmd
+        .current_dir(temp.path())
+        .args(["refs", "intro.md#overview", "--format", "json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    let matches = json
+        .get("matches")
+        .and_then(|value| value.as_array())
+        .expect("matches array");
+    assert_eq!(matches.len(), 1);
+    let first = matches.first().unwrap();
+    assert_eq!(first.get("file").unwrap().as_str().unwrap(), "guide.md");
+    assert_eq!(
+        json.get("query").unwrap().as_str().unwrap(),
+        "intro.md#overview"
     );
 }

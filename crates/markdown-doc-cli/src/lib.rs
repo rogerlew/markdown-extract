@@ -7,8 +7,8 @@ use markdown_doc_core::MarkdownDoc;
 use markdown_doc_format::{CatalogFormat, LintFormat, ValidateFormat};
 use markdown_doc_ops::OperationError;
 use markdown_doc_ops::{
-    CatalogOptions, CatalogOutcome, LintOptions, LintOutcome, MvFileStatus, MvOptions, ScanOptions,
-    TocMode, TocOptions, TocOutcome, ValidateOptions, ValidateOutcome,
+    CatalogOptions, CatalogOutcome, LintOptions, LintOutcome, MvFileStatus, MvOptions, RefsOptions,
+    ScanOptions, TocMode, TocOptions, TocOutcome, ValidateOptions, ValidateOutcome,
 };
 use serde_json::json;
 
@@ -25,6 +25,7 @@ pub fn run() -> Result<i32> {
         Command::Lint(args) => handle_lint(ops, args),
         Command::Validate(args) => handle_validate(ops, args),
         Command::Toc(args) => handle_toc(ops, args),
+        Command::Refs(args) => handle_refs(ops, args),
         Command::Mv(args) => handle_mv(ops, args),
     }
 }
@@ -184,6 +185,94 @@ fn handle_toc(ops: &markdown_doc_ops::Operations, args: TocArgs) -> Result<i32> 
     Ok(exit_code)
 }
 
+fn handle_refs(ops: &markdown_doc_ops::Operations, args: RefsArgs) -> Result<i32> {
+    let RefsArgs {
+        pattern,
+        path,
+        staged,
+        format,
+        anchor_only,
+        no_ignore,
+    } = args;
+
+    let format = match format.unwrap_or(RefsFormatValue::Plain) {
+        RefsFormatValue::Plain => RefsFormat::Plain,
+        RefsFormatValue::Json => RefsFormat::Json,
+    };
+
+    let scan = ScanOptions {
+        paths: path,
+        staged,
+        respect_ignore: !no_ignore,
+    };
+
+    let options = RefsOptions {
+        scan,
+        pattern,
+        anchor_only,
+    };
+
+    match ops.refs(options) {
+        Ok(outcome) => {
+            match format {
+                RefsFormat::Json => {
+                    let payload = json!({
+                        "query": outcome.query,
+                        "matches": outcome
+                            .matches
+                            .iter()
+                            .map(|m| {
+                                json!({
+                                    "file": m.source,
+                                    "line": m.line,
+                                    "display": m.display,
+                                    "target_path": m.target_path,
+                                    "target_anchor": m.target_anchor,
+                                })
+                            })
+                            .collect::<Vec<_>>()
+                    });
+                    println!("{}", serde_json::to_string_pretty(&payload)?);
+                }
+                RefsFormat::Plain => {
+                    if outcome.matches.is_empty() {
+                        println!("No references found for '{}'.", outcome.query);
+                    } else {
+                        for m in &outcome.matches {
+                            let target = match (&m.target_path, &m.target_anchor) {
+                                (Some(path), Some(anchor)) => {
+                                    format!("{}#{}", path.display(), anchor)
+                                }
+                                (Some(path), None) => path.display().to_string(),
+                                (None, Some(anchor)) => format!("#{}", anchor),
+                                _ => "(unknown)".to_string(),
+                            };
+                            println!(
+                                "{}:{} -> {} | {}",
+                                m.source.display(),
+                                m.line,
+                                target,
+                                m.display.trim()
+                            );
+                        }
+                    }
+                }
+            }
+
+            Ok(outcome.exit_code)
+        }
+        Err(OperationError::InvalidInput(message)) => {
+            eprintln!("{message}");
+            Ok(1)
+        }
+        Err(OperationError::Io { path, source }) => {
+            eprintln!("I/O error on {}: {}", path.display(), source);
+            Ok(4)
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
 fn handle_mv(ops: &markdown_doc_ops::Operations, args: MvArgs) -> Result<i32> {
     let MvArgs {
         source,
@@ -301,6 +390,8 @@ enum Command {
     Validate(ValidateArgs),
     /// Synchronise table-of-contents blocks
     Toc(TocArgs),
+    /// List references to files or anchors
+    Refs(RefsArgs),
     /// Move or rename a Markdown file and update references
     Mv(MvArgs),
 }
@@ -392,6 +483,28 @@ struct TocArgs {
 }
 
 #[derive(Args)]
+struct RefsArgs {
+    /// Pattern to match (path, glob, or anchor slug)
+    #[arg(value_name = "PATTERN")]
+    pattern: String,
+    /// Restrict search to specific paths
+    #[arg(long = "path", value_name = "PATH", action = ArgAction::Append)]
+    path: Vec<PathBuf>,
+    /// Limit search to staged files
+    #[arg(long)]
+    staged: bool,
+    /// Select refs output format
+    #[arg(long, value_enum)]
+    format: Option<RefsFormatValue>,
+    /// Treat the pattern as an anchor slug only
+    #[arg(long = "anchor-only")]
+    anchor_only: bool,
+    /// Disable `.markdown-doc-ignore` filtering
+    #[arg(long = "no-ignore")]
+    no_ignore: bool,
+}
+
+#[derive(Args)]
 struct MvArgs {
     /// Source Markdown file (relative to project root)
     #[arg(value_name = "SOURCE")]
@@ -434,6 +547,17 @@ enum LintFormatValue {
 
 #[derive(Clone, Copy, ValueEnum)]
 enum ValidateFormatValue {
+    Plain,
+    Json,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum RefsFormatValue {
+    Plain,
+    Json,
+}
+
+enum RefsFormat {
     Plain,
     Json,
 }
