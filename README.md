@@ -8,7 +8,21 @@
 
 </div>
 
-Extract sections of a markdown file with a regular expression.
+A suite of command-line tools for working with Markdown documentation: extract sections by heading, edit content programmatically, and maintain documentation quality.
+
+---
+
+## 🚀 Toolkit Overview
+
+| Tool | Purpose | Key Use Cases |
+|------|---------|---------------|
+| **[`markdown-extract`](#usage)** | Read sections from Markdown files by heading pattern | Context extraction, release notes, API docs, agent workflows |
+| **[`markdown-edit`](#companion-cli-markdown-edit)** | Modify Markdown with heading-aware operations | Automated updates, changelog maintenance, content injection |
+| **[`markdown-doc`](#companion-cli-markdown-doc)** | Repository-wide documentation management | Catalog generation, link validation, quality enforcement |
+
+**🤖 For AI Agents:** All three tools are pre-installed at `/usr/local/bin` on managed hosts. They're designed for automation with structured output formats (JSON/SARIF), predictable exit codes, and pipeline-friendly behavior.
+
+---
 
 ## Usage
 
@@ -377,7 +391,375 @@ The CLI surfaces actionable messages from the core engine:
 - Backups & atomic writes: every write goes to `file.tmp` and promotes to the original name only after fsync; `--no-backup` skips the `.bak` copy.
 - Path hygiene: the CLI operates on user-supplied paths. In CI/CD, prefer repository-relative paths or sandboxed working directories when invoking the tool with untrusted input.
 
+## Companion CLI: `markdown-doc`
+
+**🤖 For AI Agents:** `markdown-doc` is pre-installed at `/usr/local/bin` on managed hosts. Use it to maintain documentation catalogs and enforce quality standards.
+
+The `markdown-doc` toolkit provides repository-wide documentation management with two core commands:
+
+### Commands
+
+#### `catalog` - Generate Documentation Index
+
+Creates a unified catalog of all Markdown files with their heading structure. Perfect for navigation, discovery, and keeping track of documentation coverage.
+
+```console
+# Generate markdown catalog (default: DOC_CATALOG.md)
+$ markdown-doc catalog
+
+# Output to JSON for programmatic processing
+$ markdown-doc catalog --format json
+
+# Catalog specific paths only
+$ markdown-doc catalog --path docs/
+
+# Check only staged files (great for pre-commit hooks)
+$ markdown-doc catalog --staged
+```
+
+**Output formats:**
+- `--format markdown` (default): Human-readable catalog with clickable links
+- `--format json`: Structured data with file paths, heading levels, anchors, and timestamps
+
+**JSON schema:**
+```json
+{
+  "last_updated": "2025-10-25T17:17:48Z",
+  "file_count": 227,
+  "files": [
+    {
+      "path": "README.md",
+      "headings": [
+        {"level": 1, "text": "Title", "anchor": "title"},
+        {"level": 2, "text": "Section", "anchor": "section"}
+      ]
+    }
+  ]
+}
+```
+
+#### `lint` - Quality Enforcement
+
+Runs configurable lint rules to catch common documentation issues. MVP ships with `broken-links` detection.
+
+```console
+# Check all markdown files for broken links
+$ markdown-doc lint
+
+# Lint specific paths
+$ markdown-doc lint --path docs/api/
+
+# Check only staged files (pre-commit)
+$ markdown-doc lint --staged
+
+# JSON output for CI/CD pipelines
+$ markdown-doc lint --format json
+
+# SARIF format for GitHub Actions / IDE integration
+$ markdown-doc lint --format sarif
+```
+
+**Output formats:**
+- `--format plain` (default): Human-readable with emoji indicators (❌ errors, ⚠️ warnings)
+- `--format json`: Structured findings with file/line/severity data
+- `--format sarif`: SARIF 2.1.0 format for IDE integration and code scanning platforms
+
+**Exit codes:**
+- `0`: All checks passed (or only warnings)
+- `1`: Errors found
+
+**JSON schema:**
+```json
+{
+  "summary": {
+    "files_scanned": 227,
+    "errors": 11,
+    "warnings": 0
+  },
+  "findings": [
+    {
+      "rule": "broken-links",
+      "severity": "error",
+      "file": "docs/guide.md",
+      "line": 42,
+      "message": "Broken link to 'missing-file.md'"
+    }
+  ]
+}
+```
+
+### Configuration
+
+`markdown-doc` uses a cascading configuration system with the following precedence (highest to lowest):
+
+1. `--config <path>` CLI override
+2. `.markdown-doc.toml` in working directory
+3. `.markdown-doc.toml` at git repository root
+4. Built-in defaults
+
+**Example `.markdown-doc.toml`:**
+
+```toml
+[project]
+name = "my-project"
+root = "."
+exclude = ["**/node_modules/**", "**/vendor/**"]
+
+[catalog]
+output = "DOC_CATALOG.md"
+include_patterns = ["**/*.md"]
+exclude_patterns = ["**/node_modules/**", "**/vendor/**", "**/target/**"]
+
+[lint]
+rules = ["broken-links"]
+max_heading_depth = 4
+
+# Override severity for specific rules
+[lint.severity]
+broken-links = "error"
+
+# Ignore patterns for specific rules
+[[lint.ignore]]
+path = "tests/**/*.md"
+rules = ["broken-links"]
+
+[[lint.ignore]]
+path = "CHANGELOG.md"
+rules = ["heading-hierarchy"]
+```
+
+**Configuration reference:**
+
+| Section | Key | Type | Default | Description |
+|---------|-----|------|---------|-------------|
+| `project` | `name` | string | (none) | Project display name |
+| `project` | `root` | path | `"."` | Repository root directory |
+| `project` | `exclude` | glob[] | `[]` | Paths to exclude globally |
+| `catalog` | `output` | path | `"DOC_CATALOG.md"` | Where to write catalog |
+| `catalog` | `include_patterns` | glob[] | `["**/*.md"]` | Files to include |
+| `catalog` | `exclude_patterns` | glob[] | Common build dirs | Files to exclude |
+| `lint` | `rules` | string[] | `["broken-links"]` | Active lint rules |
+| `lint` | `max_heading_depth` | int (1-6) | `4` | Maximum heading level |
+| `lint.severity` | `<rule>` | `error`/`warning`/`ignore` | `error` | Override rule severity |
+| `lint.ignore` | `path` | glob | (required) | Pattern to ignore |
+| `lint.ignore` | `rules` | string[] | (required) | Rules to disable for pattern |
+
+### Available Lint Rules
+
+| Rule | Description | Status |
+|------|-------------|--------|
+| `broken-links` | Detects internal markdown links to non-existent files | ✅ MVP |
+| `broken-anchors` | Verifies heading anchors in links exist | 🚧 Planned |
+| `duplicate-anchors` | Flags duplicate heading IDs in same file | 🚧 Planned |
+| `heading-hierarchy` | Ensures heading levels don't skip (e.g., H1→H3) | 🚧 Planned |
+| `required-sections` | Enforces presence of specific headings | 🚧 Planned |
+
+### Integration Examples
+
+#### Pre-commit Hook
+
+```bash
+#!/bin/bash
+# .git/hooks/pre-commit
+
+# Only lint staged markdown files
+if ! markdown-doc lint --staged --format plain; then
+  echo "❌ Documentation lint failed. Fix errors or use 'git commit --no-verify'"
+  exit 1
+fi
+
+exit 0
+```
+
+#### GitHub Actions
+
+```yaml
+name: Documentation Quality
+
+on: [push, pull_request]
+
+jobs:
+  lint-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Run markdown-doc lint
+        run: |
+          markdown-doc lint --format sarif > results.sarif
+          
+      - name: Upload SARIF results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: results.sarif
+          
+  catalog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Generate catalog
+        run: markdown-doc catalog
+        
+      - name: Check for changes
+        run: |
+          if ! git diff --exit-code DOC_CATALOG.md; then
+            echo "❌ Catalog is out of date. Run 'markdown-doc catalog' locally."
+            exit 1
+          fi
+```
+
+#### CI/CD Pipeline (GitLab CI)
+
+```yaml
+lint:docs:
+  stage: test
+  script:
+    - markdown-doc lint --format json > lint-results.json
+  artifacts:
+    reports:
+      junit: lint-results.json
+    when: always
+```
+
+### For AI Agent Workflows
+
+**🤖 Both `markdown-doc` commands are installed at `/usr/local/bin` on managed systems.**
+
+`markdown-doc` is designed for automated documentation maintenance and quality enforcement in agent workflows:
+
+**Catalog use cases:**
+```bash
+# Discover all documentation for context gathering
+docs=$(markdown-doc catalog --format json)
+
+# Find files containing specific topics
+markdown-doc catalog --format json | \
+  jq -r '.files[] | select(.headings[].text | contains("API")) | .path'
+
+# Verify documentation coverage
+file_count=$(markdown-doc catalog --format json | jq '.file_count')
+if [ "$file_count" -lt 10 ]; then
+  echo "Warning: Only $file_count documentation files found"
+fi
+```
+
+**Lint use cases:**
+```bash
+# Validate before documentation updates
+if ! markdown-doc lint --staged > /dev/null 2>&1; then
+  echo "Pre-commit validation failed, rolling back changes"
+  git restore --staged .
+  exit 1
+fi
+
+# Parse findings programmatically
+findings=$(markdown-doc lint --format json)
+error_count=$(echo "$findings" | jq '.summary.errors')
+
+if [ "$error_count" -gt 0 ]; then
+  echo "Found $error_count documentation errors"
+  echo "$findings" | jq -r '.findings[] | "\(.file):\(.line): \(.message)"'
+  exit 1
+fi
+```
+
+**Python integration:**
+```python
+import subprocess
+import json
+
+def get_catalog():
+    """Fetch structured documentation catalog."""
+    result = subprocess.run(
+        ["markdown-doc", "catalog", "--format", "json"],
+        capture_output=True,
+        text=True,
+        check=True
+    )
+    return json.loads(result.stdout)
+
+def lint_docs(paths=None):
+    """Run lint checks and return structured findings."""
+    cmd = ["markdown-doc", "lint", "--format", "json"]
+    if paths:
+        for path in paths:
+            cmd.extend(["--path", path])
+    
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    findings = json.loads(result.stdout)
+    
+    return {
+        "success": result.returncode == 0,
+        "errors": findings["summary"]["errors"],
+        "findings": findings["findings"]
+    }
+
+# Usage in agent workflows
+catalog = get_catalog()
+print(f"Found {catalog['file_count']} documentation files")
+
+# Target specific paths
+lint_result = lint_docs(paths=["docs/api/"])
+if not lint_result["success"]:
+    print(f"❌ {lint_result['errors']} errors found")
+    for finding in lint_result["findings"]:
+        print(f"  {finding['file']}:{finding['line']}: {finding['message']}")
+```
+
+**Selective scanning patterns:**
+```bash
+# Check only API documentation
+markdown-doc lint --path "docs/api/**/*.md"
+
+# Catalog specific controller docs
+markdown-doc catalog --path "controllers_js/**/README.md" --format json
+
+# Lint work package documents only
+markdown-doc lint --path "docs/work-packages/**/*.md"
+
+# Pre-commit: only staged files
+markdown-doc lint --staged
+```
+
+**Exit code handling:**
+```bash
+#!/bin/bash
+# Robust error handling for automation
+
+set +e  # Don't exit on error
+markdown-doc lint --format json > lint-results.json
+exit_code=$?
+set -e
+
+case $exit_code in
+  0)
+    echo "✅ All documentation checks passed"
+    ;;
+  1)
+    echo "❌ Documentation errors found:"
+    jq -r '.findings[] | "  \(.file):\(.line): \(.message)"' lint-results.json
+    exit 1
+    ;;
+  *)
+    echo "⚠️  Lint command failed (exit code $exit_code)"
+    exit $exit_code
+    ;;
+esac
+```
+
+### Performance
+
+Benchmarked on 734 Markdown files (~83k lines):
+- **Catalog generation**: ~78ms
+- **Lint (broken-links)**: ~77ms
+
+The toolkit uses parallel processing and is suitable for pre-commit hooks and CI pipelines.
+
 ## Installation
+
+> **⚠️ AI Agents:** On managed hosts, all three tools (`markdown-extract`, `markdown-edit`, `markdown-doc`) are pre-installed at `/usr/local/bin`. You can use them directly without installation.
 
 ### Using Cargo
 
@@ -387,6 +769,9 @@ $ cargo install markdown-extract-cli
 
 # Build the editor from this workspace
 $ cargo install --path crates/markdown-edit-cli
+
+# Build the doc toolkit from this workspace
+$ cargo install --path crates/markdown-doc-cli
 ```
 
 Or run the tools in place:
@@ -397,6 +782,9 @@ $ cargo run -p markdown-extract-cli -- <args>
 
 # Edit
 $ cargo run -p markdown-edit-cli -- <args>
+
+# Doc toolkit
+$ cargo run -p markdown-doc-cli -- <args>
 ```
 
 ### Docker

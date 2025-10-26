@@ -186,3 +186,37 @@ Agent Task: CLI Integration (completed)
 - Integration tests (`crates/markdown-edit-cli/tests/cli.rs`) exercise dry-run diffs, argument validation, and not-found messaging; relies on fixture `tests/fixtures/sample.md`.
 - Updated README with a companion CLI section and flag reference so contributors can discover and operate `markdown-edit`.
 - Added stdin support to `markdown-extract` (pass `-` as FILE) and covered it with an integration test.
+
+AGENT NOTES: markdown-doc Toolkit
+=================================
+
+Phase 1 Foundations
+-------------------
+- **Configuration (`crates/markdown-doc-config`)**: Loads layered `.markdown-doc.toml` files (override → local → git root → defaults) into typed settings. Validates lint rules, glob patterns, ignore entries, and exposes provenance metadata (`ConfigSources`).
+- **Parser (`crates/markdown-doc-parser`)**: `ParserContext` reuses `markdown-extract` to emit `DocumentSection`s with normalized headings, anchors, byte ranges, and per-line content while honoring include/exclude patterns, front matter, and code blocks.
+- **Operations & CLI**:
+  - `markdown-doc-ops` implements `catalog` and `lint` (broken-links) using `ScanOptions`, git staged detection, and atomic writes.
+  - `markdown-doc-format` renders catalog (Markdown/JSON) and lint reports (plain/JSON/SARIF).
+  - `markdown-doc-cli` exposes `catalog`/`lint` via `clap`, supporting selective scanning and structured output formats.
+- **Benchmark harness**: `tools/markdown-doc-bench` times catalog + lint runs against fixtures and powers CI benchmarks.
+
+CI & Benchmarks
+---------------
+- `.github/workflows/build_and_test.yml` (push/PR):
+  ```bash
+  cargo fmt --all -- --check
+  cargo clippy --all-targets --all-features -- -D warnings
+  cargo test --all --all-features
+  ```
+  Docker/action tests remain push-only.
+- `.github/workflows/bench.yml` (nightly/manual) runs:
+  ```bash
+  cargo run -p markdown-doc-bench --release -- --iterations 5 --warmup 1
+  ```
+  Uploads `benchmark-results.txt` and appends a job summary for historical tracking.
+
+Developer Notes
+---------------
+- Catalog default output is `DOC_CATALOG.md`; JSON available via `--format json`.
+- Broken-links lint honors severity overrides and ignore globs; SARIF output supports CI ingestion.
+- Benchmark target defaults to `tests/markdown-doc/wepppy`; override with `--path` when profiling other trees.
