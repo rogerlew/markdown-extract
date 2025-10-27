@@ -13,8 +13,8 @@
 
 ### Ready / Backlog
 - [ ] Evaluate CI workflow alignment with parent `/workdir/wepppy` pipelines before duplicating jobs (**PM/Agent 4**)
-- [ ] Implement docs-quality telemetry logging (Phase 0) (**Agent 11**) – `prompts/active/agent11_phase0_telemetry.md`
-- [ ] Define Phase 4 search/indexing kick-off once telemetry gate clears (assign agents 11–13)
+- [ ] Reactivate Phase 0 telemetry task (`prompts/completed/agent11_phase0_telemetry.md`) when Phase 4 kickoff window opens
+- [ ] Outline agent assignments for Phase 4 search/indexing once telemetry gate clears
 
 ### In Progress
 - [ ] Monitor benchmark baseline; rerun after significant parser/IO changes

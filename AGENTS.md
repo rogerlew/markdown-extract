@@ -223,7 +223,7 @@ Developer Notes
 
 Phase 2 – TOC Command & Severity (Agent 7)
 ------------------------------------------
-- Prompt refreshed with current implementation snapshot and explicit deliverables (`docs/work-packages/20251025_markdown_doc_toolkit/prompts/active/agent7_phase2_toc_severity.md`).
+- Prompt refreshed with current implementation snapshot and explicit deliverables (`docs/work-packages/20251025_markdown_doc_toolkit/prompts/completed/agent7_phase2_toc_severity.md`).
 - Workspace tests currently fail because `load_ignore_filter` calls `GitignoreBuilder::add(&path).is_err()`; the API now returns `Result` (`crates/markdown-doc-ops/src/lib.rs:409`).
 - `toc::locate_block` triggers unused-assignment warnings at EOF and needs tighter marker handling before publishing (`crates/markdown-doc-ops/src/toc.rs:75`).
 - TOC command lacks end-to-end coverage for diff/update flows, newline preservation, and `.markdown-doc-ignore`/`--no-ignore` CLI combinations; extend tests in `crates/markdown-doc-ops/tests/toc.rs` and add new fixtures.
@@ -231,8 +231,22 @@ Phase 2 – TOC Command & Severity (Agent 7)
 
 Phase 3 – Link Graph, mv, refs (Agents 8–10)
 --------------------------------------------
-- **Agent 8 (`docs/work-packages/20251025_markdown_doc_toolkit/prompts/active/agent8_phase3_link_graph.md`)** delivered the link graph core under `markdown-doc-ops::refactor::graph`, exposing anchors, links, and backreferences alongside rewrite planning via `plan_file_moves`. Tests live in `crates/markdown-doc-ops/tests/graph.rs` and `tests/rewrite.rs`.
-- **Agent 9 (`docs/work-packages/20251025_markdown_doc_toolkit/prompts/active/agent9_phase3_mv.md`)** implemented `markdown-doc mv`, wiring CLI + ops to the refactor engine. Supports `--dry-run`, `--force`, `--no-backup`, `--json`, `--quiet`, `--no-ignore`. Tests cover ops (`crates/markdown-doc-ops/tests/mv.rs`) and CLI (`crates/markdown-doc-cli/tests/cli.rs`).
-- **Agent 10 (`docs/work-packages/20251025_markdown_doc_toolkit/prompts/active/agent10_phase3_refs.md`)** adds `markdown-doc refs`, reference discovery, and stress fixtures under `tests/markdown-doc/refactor/complex/`. Ops tests in `crates/markdown-doc-ops/tests/refs.rs`; CLI coverage appended to `crates/markdown-doc-cli/tests/cli.rs`.
+- **Agent 8 (`docs/work-packages/20251025_markdown_doc_toolkit/prompts/completed/agent8_phase3_link_graph.md`)** delivered the link graph core under `markdown-doc-ops::refactor::graph`, exposing anchors, links, and backreferences alongside rewrite planning via `plan_file_moves`. Tests live in `crates/markdown-doc-ops/tests/graph.rs` and `tests/rewrite.rs`.
+- **Agent 9 (`docs/work-packages/20251025_markdown_doc_toolkit/prompts/completed/agent9_phase3_mv.md`)** implemented `markdown-doc mv`, wiring CLI + ops to the refactor engine. Supports `--dry-run`, `--force`, `--no-backup`, `--json`, `--quiet`, `--no-ignore`. Tests cover ops (`crates/markdown-doc-ops/tests/mv.rs`) and CLI (`crates/markdown-doc-cli/tests/cli.rs`).
+- **Agent 10 (`docs/work-packages/20251025_markdown_doc_toolkit/prompts/completed/agent10_phase3_refs.md`)** adds `markdown-doc refs`, reference discovery, and stress fixtures under `tests/markdown-doc/refactor/complex/`. Ops tests in `crates/markdown-doc-ops/tests/refs.rs`; CLI coverage appended to `crates/markdown-doc-cli/tests/cli.rs`.
 - README & architecture docs now document mv/refs usage (`README.md`, `docs/markdown-doc/README.md`), and tracker has Agent 8–10 entries (`docs/work-packages/20251025_markdown_doc_toolkit/tracker.md`).
 - Pending follow-ups: directory/batch moves, link graph caching, future `markdown-doc refs` enhancements (globbed anchors) and additional refactor tooling.
+
+
+Phase 3 Handoff (2025-10-31)
+----------------------------
+- docs-quality workflow now runs `wctl doc-lint` (JSON + SARIF), uploads SARIF without normalization, executes `wctl doc-bench`, and runs `cargo fmt/clippy/test` via `MARKDOWN_DOC_WORKSPACE`.
+- `.markdown-doc-ignore` excludes `.docker-data/**`; lint remains clean and the SARIF formatter skips ignored directories during tree walk.
+- Telemetry logging enabled (2025-10-31): JSON lines appended to `telemetry/docs-quality.jsonl` and artifact `docs-quality-telemetry`.
+- Pending integration decisions: benchmark cadence, release comms, link graph caching roadmap.
+
+Phase 4 Planning Snapshot
+-------------------------
+- RFC drafted (`docs/work-packages/20251025_markdown_doc_toolkit/rfc_phase4_search_indexing.md`) with milestones (Phase 0 telemetry gate – 2025-11-18, M1 2025-12-06, M2 2025-12-20, M3 2026-01-10).
+- Implementation plan + tracker updated; prompts archived (see `prompts/completed/`).
+- Stakeholders: Roger Lew, GPT-5 Codex, Claude Sonnet 4.5. Telemetry gate (≥2 weeks data) required before agent kickoff.
