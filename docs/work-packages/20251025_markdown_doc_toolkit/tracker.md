@@ -5,16 +5,16 @@
 ## Quick Status
 
 **Started**: 2025-10-25  
-**Current phase**: Phase 3 – Refactoring support in progress  
-**Last updated**: 2025-10-28 (`markdown-doc refs` + stress fixtures)  
-**Next milestone**: Phase 3 wrap-up (CI alignment & Phase 4 planning)
+**Current phase**: Phase 4 – Search & Indexing planning  
+**Last updated**: 2025-10-31 (Phase 4 scope RFC draft + SARIF compliance)  
+**Next milestone**: Phase 0 telemetry logging live (docs-quality)
 
 ## Task Board
 
 ### Ready / Backlog
 - [ ] Evaluate CI workflow alignment with parent `/workdir/wepppy` pipelines before duplicating jobs (**PM/Agent 4**)
-- [ ] Identify additional fixtures for Phase 3 stress tests (nested directories, mixed links) (**Future Agent**)
-- [ ] Implement `markdown-doc refs` command & stress-test fixtures (**Agent 10**) – `prompts/active/agent10_phase3_refs.md`
+- [ ] Implement docs-quality telemetry logging (Phase 0) (**Agent 11**) – `prompts/active/agent11_phase0_telemetry.md`
+- [ ] Define Phase 4 search/indexing kick-off once telemetry gate clears (assign agents 11–13)
 
 ### In Progress
 - [ ] Monitor benchmark baseline; rerun after significant parser/IO changes
@@ -35,6 +35,7 @@
 - [x] `markdown-doc mv` command delivered with transactional rewrites (**Agent 9**, 2025-10-27)
 - [x] Phase 3 documentation refresh (mv command comprehensive coverage) (**Claude**, 2025-10-27)
 - [x] `markdown-doc refs` command & complex fixtures delivered (**Agent 10**, 2025-10-28)
+- [x] SARIF formatter emits camelCase + ignore guard during tree walk (2025-10-30)
 
 ## Timeline
 
@@ -44,7 +45,8 @@
 - **2025-10-26** – Schema matcher + validate command available for template enforcement
 - **2025-10-27** – Link graph + `mv` command shipped (Phase 3 kickoff)
 - **2025-10-28** – `refs` command & stress fixtures delivered
-- **TBD** – Phase 4 intelligence features delivered and package closed
+- **2025-10-31** – Phase 4 scope RFC drafted; SARIF compliance completed
+- **TBD** – Phase 4 search/indexing release (post telemetry gate)
 
 ## Decisions Log
 

@@ -34,12 +34,13 @@
 - [x] Add stress tests for nested directories, mixed link styles, rollback scenarios
 - [x] Document safe refactoring workflows and `wctl` wrappers
 
-## Phase 4 — Intelligence & Automation
-- [ ] Define acceptance criteria for search (latency, ranking, snippets)
-- [ ] Implement indexing backend (evaluate `tantivy` vs custom) with cache/invalidation
-- [ ] Ship `search` command with ranked results and machine-readable output
-- [ ] Explore watch mode (`notify`-based) for auto lint/catalog refresh
-- [ ] Provide documentation on advanced automation and agent integration
+## Phase 4 — Search & Indexing MVP
+- [ ] Phase 0 telemetry: docs-quality logging for lint runtime/error (≥2 weeks of data collected)
+- [ ] Implement `markdown-doc search` (token search, ranking, text/JSON outputs)
+- [ ] Build reusable index artifact with incremental refresh + stats
+- [ ] Extend telemetry (index/search metrics) and optional docs-quality integration behind `DOC_SEARCH_INDEX`
+- [ ] Update documentation (`README.md`, tools README, wctl wrapper) & publish benchmarks
+- [ ] Capture watch-mode requirements for future phases
 
 ## Testing & QA
 - [ ] Enforce `cargo fmt`, `cargo clippy --all-targets --all-features`, `cargo test --all` in CI
@@ -54,3 +55,4 @@
 - [x] Prepare shared fixtures/bench harness and assign implementation agents
 - [x] Launch Phase 3 refactoring efforts (link graph, mv, refs)
 - [ ] Define CI alignment plan with parent repo (fmt/clippy/test automation)
+- [ ] Finalise Phase 4 RFC & execute Phase 0 telemetry gate
