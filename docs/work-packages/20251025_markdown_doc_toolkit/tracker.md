@@ -463,6 +463,20 @@ markdown-doc refs docs/guide.md --format json | jq '.matches | length'
 markdown-doc refs '#overview' --format plain
 ```
 
+### 2025-10-30: SARIF schema compliance
+**Agent/Contributor**: Codex PM Agent
+
+**Work completed**:
+- Updated SARIF renderer to emit camelCase fields (`ruleId`, `physicalLocation`, `fullDescription`, etc.) and early-ignore permission-denied paths during tree walk so `.docker-data/**` is skipped without CI shims.
+- Validated output against lint fixtures and confirmed CodeQL ingest without workflow rewrites.
+
+**Test results**:
+```bash
+cargo fmt
+cargo test --all
+cargo run -p markdown-doc-cli -- lint --format sarif --path README.md
+```
+
 ### 2025-10-26: Phase 3 kickoff planning
 **Agent/Contributor**: Codex PM Agent
 
@@ -823,4 +837,3 @@ markdown-doc catalog --format json > /dev/null
 3. Phase 3 documentation is complete pending Agent 10 (refs implementation)
 
 **Verification status**: ✅ **COMPLETE & READY FOR HANDOVER** - README polished, navigation enhanced, all documentation validated
-

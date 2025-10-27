@@ -293,11 +293,13 @@ impl Renderer {
         }
 
         #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
         struct Region {
             start_line: usize,
         }
 
         #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
         struct ArtifactLocation<'a> {
             uri: String,
             #[serde(skip_serializing_if = "Option::is_none")]
@@ -305,17 +307,20 @@ impl Renderer {
         }
 
         #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
         struct PhysicalLocation<'a> {
             artifact_location: ArtifactLocation<'a>,
             region: Region,
         }
 
         #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
         struct Location<'a> {
             physical_location: PhysicalLocation<'a>,
         }
 
         #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
         struct ResultEntry<'a> {
             rule_id: &'a str,
             level: &'a str,
@@ -324,6 +329,7 @@ impl Renderer {
         }
 
         #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
         struct Rule<'a> {
             id: &'a str,
             name: &'a str,
@@ -331,12 +337,14 @@ impl Renderer {
         }
 
         #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
         struct Driver<'a> {
             name: &'a str,
             rules: Vec<Rule<'a>>,
         }
 
         #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
         struct Tool<'a> {
             driver: Driver<'a>,
         }

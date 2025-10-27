@@ -491,7 +491,7 @@ $ markdown-doc lint --format sarif
 **Output formats:**
 - `--format plain` (default): Human-readable with emoji indicators (❌ errors, ⚠️ warnings)
 - `--format json`: Structured findings with file/line/severity data
-- `--format sarif`: SARIF 2.1.0 format for IDE integration and code scanning platforms
+- `--format sarif`: SARIF 2.1.0 format (camelCase fields, compatible with GitHub Code Scanning / CodeQL)
 
 **Exit codes:**
 - `0`: All checks passed (or only warnings)

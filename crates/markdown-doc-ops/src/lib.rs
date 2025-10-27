@@ -688,9 +688,9 @@ impl Operations {
                 filter_paths(staged, &options.paths, &root)
             }
         } else if options.paths.is_empty() {
-            walk_markdown_files(&root)?
+            walk_markdown_files(&root, self.ignore_filter.as_ref())?
         } else {
-            collect_from_paths(&root, &options.paths)?
+            collect_from_paths(&root, &options.paths, self.ignore_filter.as_ref())?
         };
 
         candidates.retain(|path| self.parser.is_path_in_scope(path));
@@ -764,38 +764,60 @@ fn load_ignore_filter(root: &Path) -> Option<Gitignore> {
     }
 }
 
-fn walk_markdown_files(root: &Path) -> Result<Vec<PathBuf>, OperationError> {
+fn walk_markdown_files(
+    root: &Path,
+    ignore_filter: Option<&Gitignore>,
+) -> Result<Vec<PathBuf>, OperationError> {
     let mut files = Vec::new();
-    for entry in WalkDir::new(root) {
-        let entry = match entry {
-            Ok(entry) => entry,
+    let mut walker = WalkDir::new(root).into_iter();
+    while let Some(entry) = walker.next() {
+        match entry {
+            Ok(entry) => {
+                let path = entry.path();
+
+                if entry.file_type().is_dir() {
+                    if is_ignored(path, ignore_filter, root) {
+                        walker.skip_current_dir();
+                    }
+                    continue;
+                }
+
+                if let Some(name) = path.file_name().and_then(OsStr::to_str) {
+                    if is_markdown_path(name) {
+                        let relative = path.strip_prefix(root).unwrap_or(path);
+                        files.push(relative.to_path_buf());
+                    }
+                }
+            }
             Err(err) => {
-                let path_hint = err.path().unwrap_or(root).to_path_buf();
+                let path_buf = err
+                    .path()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| root.to_path_buf());
+                if is_ignored(&path_buf, ignore_filter, root) {
+                    walker.skip_current_dir();
+                    continue;
+                }
+
                 let message = err.to_string();
                 let source = err
                     .into_io_error()
                     .unwrap_or_else(|| io::Error::other(message));
                 return Err(OperationError::Io {
-                    path: path_hint,
+                    path: path_buf,
                     source,
                 });
-            }
-        };
-
-        if entry.file_type().is_file() {
-            let path = entry.path();
-            if let Some(name) = path.file_name().and_then(OsStr::to_str) {
-                if is_markdown_path(name) {
-                    let relative = path.strip_prefix(root).unwrap_or(path);
-                    files.push(relative.to_path_buf());
-                }
             }
         }
     }
     Ok(files)
 }
 
-fn collect_from_paths(root: &Path, paths: &[PathBuf]) -> Result<Vec<PathBuf>, OperationError> {
+fn collect_from_paths(
+    root: &Path,
+    paths: &[PathBuf],
+    ignore_filter: Option<&Gitignore>,
+) -> Result<Vec<PathBuf>, OperationError> {
     let mut results = Vec::new();
     for provided in paths {
         let absolute = if provided.is_absolute() {
@@ -805,7 +827,7 @@ fn collect_from_paths(root: &Path, paths: &[PathBuf]) -> Result<Vec<PathBuf>, Op
         };
 
         if absolute.is_dir() {
-            let mut nested = walk_markdown_files(&absolute)?;
+            let mut nested = walk_markdown_files(&absolute, ignore_filter)?;
             if let Ok(stripped) = absolute.strip_prefix(root) {
                 nested.iter_mut().for_each(|path| {
                     let full = stripped.join(&*path);
@@ -873,6 +895,21 @@ fn filter_paths(files: Vec<PathBuf>, filters: &[PathBuf], root: &Path) -> Vec<Pa
             })
             .collect()
     }
+}
+
+fn is_ignored(path: &Path, filter: Option<&Gitignore>, root: &Path) -> bool {
+    filter
+        .map(|ignore| {
+            let absolute = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                root.join(path)
+            };
+            ignore
+                .matched_path_or_any_parents(&absolute, path.is_dir())
+                .is_ignore()
+        })
+        .unwrap_or(false)
 }
 
 fn resolve_input_path(
