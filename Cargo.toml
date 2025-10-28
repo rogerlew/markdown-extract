@@ -13,5 +13,9 @@ members = [
     "crates/markdown-doc-cli",
     "crates/markdown-doc-test-support",
     "tools/markdown-doc-bench",
+    "crates/markdown_bindings_common",
+    "crates/markdown_extract_py",
+    "crates/markdown_edit_py",
+    "crates/markdown_doc_py",
 ]
 resolver = "2"

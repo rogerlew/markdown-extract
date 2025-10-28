@@ -45,7 +45,7 @@ Anchors are generated with Markdown-style slug rules and the heading normaliser 
 
 The operations layer wires parser output into the user-facing commands:
 
-- `markdown-doc catalog` walks Markdown files (respecting config include/exclude filters), renders the documentation catalog (`DOC_CATALOG.md` by default) via atomic writes, and supports `--format json` for agent workflows.
+- `markdown-doc catalog` walks Markdown files (respecting config include/exclude filters), renders the documentation catalog (`DOC_CATALOG.md` by default) via atomic writes, and supports `--format json` for agent workflows. The generated catalog should not be edited manually—rerun the command whenever the contents need to change.
 - `markdown-doc lint` now executes a configurable rule pipeline. Phase&nbsp;2 expands coverage beyond broken links to include:
   - `broken-anchors` – validates intra-/inter-file anchor fragments and suggests closest matches.
   - `duplicate-anchors` – flags repeated heading slugs within a single document.

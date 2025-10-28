@@ -1,0 +1,17 @@
+[package]
+name = "markdown_extract_py"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "PyO3 bindings for the markdown-extract library"
+authors = ["markdown-extract maintainers"]
+
+[lib]
+name = "markdown_extract_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.20", features = ["extension-module", "abi3-py38"] }
+markdown-extract = { path = "../markdown-extract" }
+markdown_bindings_common = { path = "../markdown_bindings_common" }
+regex = "1.11"

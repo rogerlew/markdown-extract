@@ -1,0 +1,16 @@
+[package]
+name = "markdown_doc_py"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "PyO3 bindings for markdown-doc TOC operations"
+
+[lib]
+name = "markdown_doc_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+markdown-doc-config = { path = "../markdown-doc-config" }
+markdown-doc-ops = { path = "../markdown-doc-ops" }
+markdown_bindings_common = { path = "../markdown_bindings_common" }
+pyo3 = { version = "0.20", features = ["extension-module", "abi3-py38"] }

@@ -1,0 +1,9 @@
+[package]
+name = "markdown_bindings_common"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Shared helpers for markdown PyO3 bindings"
+
+[dependencies]
+regex = "1.11"
