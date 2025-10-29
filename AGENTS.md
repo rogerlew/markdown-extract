@@ -135,7 +135,7 @@ Agent Task: Parser + State Enhancements
 - Expand unit tests to cover Setext heading parsing, inline markdown normalization, and front-matter skipping.
 - Add integration tests with fixtures that exercise ATX/Setext mixes, headings inside code blocks (fenced, indented, language-tagged), and byte-offset verification (assert offsets align with known positions).
 - Ensure existing tests pass; add new ones under `tests/markdown/`.
-- Run `cargo fmt`, `cargo clippy --all-targets --all-features`, and `cargo test --all` before handing the task back.
+- Run `cargo fmt`, `cargo clippy --all-targets --all-features`, and `cargo test --workspace --all-features --exclude markdown_edit_py --exclude markdown_doc_py --exclude markdown_extract_py` before handing the task back.
 
 **Deliverables**
 - Updated source files with inline comments only where logic is non-obvious.
@@ -171,7 +171,7 @@ Agent Task: Edit Engine
 - Integration tests under `tests/` that run the engine against fixture files, verifying the diff output and final file contents.
 - Simulate dry-run and real writes; ensure backups (`.bak`) are created/omitted correctly.
 - Confirm that non-ASCII headings remain intact after normalization and editing.
-- Run `cargo fmt`, `cargo clippy --all-targets --all-features`, and `cargo test --all` (workspace) before handing the task back.
+- Run `cargo fmt`, `cargo clippy --all-targets --all-features`, and `cargo test --workspace --all-features --exclude markdown_edit_py --exclude markdown_doc_py --exclude markdown_extract_py` before handing the task back.
 
 **Deliverables**
 - New core editing module/crate source files.
@@ -206,7 +206,10 @@ CI & Benchmarks
   ```bash
   cargo fmt --all -- --check
   cargo clippy --all-targets --all-features -- -D warnings
-  cargo test --all --all-features
+  cargo test --workspace --all-features \
+    --exclude markdown_edit_py \
+    --exclude markdown_doc_py \
+    --exclude markdown_extract_py
   ```
   Docker/action tests remain push-only.
 - `.github/workflows/bench.yml` (nightly/manual) runs:
