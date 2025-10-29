@@ -73,7 +73,7 @@ impl SectionTree {
         self.sections.is_empty()
     }
 
-    pub fn node(&self, index: usize) -> SectionNode {
+    pub fn node(&self, index: usize) -> SectionNode<'_> {
         SectionNode {
             index,
             section: &self.sections[index],

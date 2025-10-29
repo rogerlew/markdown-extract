@@ -12,6 +12,7 @@ ENV RUSTFLAGS='-C linker=x86_64-linux-gnu-gcc'
 WORKDIR /usr/src/markdown-extract
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+COPY tools ./tools
 RUN cargo install \
   --target x86_64-unknown-linux-musl \
   --path ./crates/markdown-extract-cli
